@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+env/
+.env
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# PyTorch checkpoints and runs
+runs/
+checkpoints/
+*.pt
+
+# Dataset files
+ds/
+
+# Temporary files
+*.log
+*.tmp
+
+# System files
+.DS_Store
+*.swp
+
+# Audio/video
+*.ts
+
+# Add any other files or directories to ignore
