@@ -1,0 +1,1487 @@
+#!/usr/bin/env python3
+import os
+import sys
+import time
+import math
+import random
+import argparse
+import json
+import logging
+from collections import defaultdict, deque
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple, List
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+from torch.utils.tensorboard import SummaryWriter
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("infiller")
+
+
+@dataclass
+class TrainConfig:
+    config: Optional[str] = None
+    ds_dir: str = "data/processed/single_gap"
+    sample: Optional[str] = None
+    auto_hparam: bool = False
+
+    wav_path: str = "data/interim/gapped_audio.wav"
+    target_sr: int = 24000
+    bandwidth: float = 6.0
+    gap_start_s: float = 200.0
+    gap_end_s: float = 210.0
+
+    d_model: int = 512
+    n_heads: int = 8
+    n_layers: int = 8
+    max_len: int = 2048
+    dropout: float = 0.1
+
+    seq_len: int = 1024
+    mask_len_min: int = 64
+    mask_len_max: int = 256
+
+    batch_size: int = 16
+    lr: float = 2e-4
+    weight_decay: float = 1e-2
+    betas: Tuple[float, float] = (0.9, 0.95)
+    grad_clip: float = 1.0
+    warmup_steps: int = 200
+    total_steps: int = 3000
+    log_every: int = 100
+    save_every: int = 500
+    test_fill_every: int = 0
+    num_workers: int = 2
+
+    output_dir: str = "outputs/runs"
+    run_name: str = "infiller"
+    seed: int = 42
+    device: str = "auto"
+
+    resume: Optional[str] = None
+    inpaint_only: bool = False
+    inpaint_output: Optional[str] = None
+
+    inpaint_iters: int = 10
+
+    ctx_left: Optional[int] = None
+    ctx_right: Optional[int] = None
+
+    # Curriculum learning
+    curriculum: bool = False
+    curriculum_start_mask: Optional[int] = None  # default: min(mask_len_max, 128)
+    curriculum_end_mask: Optional[int] = None      # default: largest_gap_frames
+    curriculum_warmup_frac: float = 0.1
+    curriculum_schedule: str = "linear"  # "linear" or "cosine"
+
+    activity_smooth_kernel: int = 9
+    activity_low_quantile: float = 0.30
+    activity_high_quantile: float = 0.70
+    weighted_sampling: bool = True
+    dead_window_min_mean: float = 0.01
+    dead_window_min_ratio: float = 0.03
+    regime_active_prob: float = 0.45
+    regime_transition_prob: float = 0.30
+    regime_low_prob: float = 0.15
+    regime_uniform_prob: float = 0.10
+    mask_stride: int = 1
+    activity_guided_masking: bool = True
+
+    @property
+    def checkpoint_dir(self) -> Path:
+        return Path(self.output_dir) / self.run_name / "checkpoints"
+
+    @property
+    def tb_dir(self) -> Path:
+        return Path(self.output_dir) / self.run_name / "tb"
+
+    @property
+    def samples_dir(self) -> Path:
+        return Path(self.output_dir) / self.run_name / "samples"
+
+
+def set_seed(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def resolve_device(cfg_device: str) -> torch.device:
+    if cfg_device == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
+    return torch.device(cfg_device)
+
+
+def normalize_robust(values: np.ndarray, low_q: float = 0.05, high_q: float = 0.95) -> np.ndarray:
+    arr = np.asarray(values, dtype=np.float32)
+    if arr.size == 0:
+        return arr
+    q0 = float(np.quantile(arr, low_q))
+    q1 = float(np.quantile(arr, high_q))
+    if q1 <= q0 + 1e-8:
+        # Fallback to min/max if quantiles collapse on near-constant content.
+        a0 = float(arr.min())
+        a1 = float(arr.max())
+        if a1 <= a0 + 1e-8:
+            return np.zeros_like(arr)
+        return np.clip((arr - a0) / (a1 - a0), 0.0, 1.0)
+    return np.clip((arr - q0) / (q1 - q0), 0.0, 1.0)
+
+
+def smooth_1d(values: np.ndarray, kernel_size: int) -> np.ndarray:
+    arr = np.asarray(values, dtype=np.float32)
+    k = int(max(1, kernel_size))
+    if k <= 1 or arr.size <= 1:
+        return arr.copy()
+    if k % 2 == 0:
+        k += 1
+    kernel = np.ones(k, dtype=np.float32) / float(k)
+    pad = k // 2
+    padded = np.pad(arr, (pad, pad), mode="edge")
+    return np.convolve(padded, kernel, mode="valid").astype(np.float32)
+
+
+def compute_rms_per_frame(wav: torch.Tensor, frames: int) -> np.ndarray:
+    samples = wav.squeeze(0).detach().cpu().numpy().astype(np.float32)
+    if frames <= 1 or samples.size <= 1:
+        return np.zeros(max(1, frames), dtype=np.float32)
+    samples_per_frame = max(1, samples.size / float(frames))
+    rms = np.zeros(frames, dtype=np.float32)
+    for i in range(frames):
+        s0 = int(round(i * samples_per_frame))
+        s1 = int(round((i + 1) * samples_per_frame))
+        if s1 <= s0:
+            s1 = min(samples.size, s0 + 1)
+        segment = samples[s0:s1]
+        if segment.size == 0:
+            rms[i] = 0.0
+        else:
+            rms[i] = float(np.sqrt(np.mean(segment * segment) + 1e-12))
+    return rms
+
+
+def compute_token_change_per_frame(codes: torch.Tensor) -> np.ndarray:
+    c = codes.detach().cpu().numpy()
+    if c.shape[1] == 0:
+        return np.zeros(0, dtype=np.float32)
+    out = np.zeros(c.shape[1], dtype=np.float32)
+    if c.shape[1] > 1:
+        changed = (c[:, 1:] != c[:, :-1]).astype(np.float32)
+        out[1:] = changed.mean(axis=0)
+        out[0] = out[1]
+    return out
+
+
+def _build_cumsum(values: np.ndarray) -> np.ndarray:
+    arr = np.asarray(values, dtype=np.float32)
+    csum = np.zeros(arr.size + 1, dtype=np.float64)
+    csum[1:] = np.cumsum(arr, dtype=np.float64)
+    return csum
+
+
+def span_mean_from_cumsum(csum: np.ndarray, start: np.ndarray, end: np.ndarray) -> np.ndarray:
+    length = np.maximum(1, end - start)
+    return ((csum[end] - csum[start]) / length).astype(np.float32)
+
+
+def choose_mask_regime(probs: Dict[str, float]) -> str:
+    names = ["active", "transition", "low_activity", "uniform"]
+    p = np.array([max(0.0, float(probs.get(n, 0.0))) for n in names], dtype=np.float64)
+    if p.sum() <= 0:
+        p = np.array([0.45, 0.30, 0.15, 0.10], dtype=np.float64)
+    p = p / p.sum()
+    return names[int(np.random.choice(len(names), p=p))]
+
+
+def compute_mask_candidate_weights(
+    regime: str,
+    mean_activity: np.ndarray,
+    active_ratio: np.ndarray,
+    std_activity: np.ndarray,
+    variation: np.ndarray,
+    proximity: np.ndarray,
+    token_change_mean: np.ndarray,
+    dead_window_min_mean: float,
+    dead_window_min_ratio: float,
+) -> np.ndarray:
+    if regime == "active":
+        w = 0.10 + 0.60 * mean_activity + 0.30 * active_ratio
+    elif regime == "transition":
+        mid_ratio = 1.0 - np.abs(active_ratio - 0.5) / 0.5
+        mid_ratio = np.clip(mid_ratio, 0.0, 1.0)
+        w = 0.05 + 0.35 * std_activity + 0.35 * variation + 0.30 * mid_ratio
+    elif regime == "low_activity":
+        low_pref = np.clip(1.0 - mean_activity, 0.0, 1.0)
+        w = 0.05 + 0.45 * low_pref + 0.30 * proximity + 0.25 * token_change_mean
+    else:
+        w = np.ones_like(mean_activity, dtype=np.float32)
+
+    # Only heavily down-weight truly dead candidate spans.
+    dead = (
+        (mean_activity < dead_window_min_mean)
+        & (active_ratio < dead_window_min_ratio)
+        & (token_change_mean < 0.01)
+        & (proximity < 0.05)
+    )
+    w = np.where(dead, 1e-5, w)
+    w = np.clip(w, 1e-6, None)
+    return w.astype(np.float32)
+
+
+class AudioEncoder:
+    def __init__(self, bandwidth: float, device: torch.device):
+        from encodec import EncodecModel
+
+        self.device = device
+        self.model = EncodecModel.encodec_model_24khz().to(device).eval()
+        self.model.set_target_bandwidth(bandwidth)
+        self.bins = int(self.model.quantizer.bins)
+        self.mask_token = self.bins
+
+    @torch.no_grad()
+    def encode(self, wav: torch.Tensor) -> Tuple[torch.Tensor, object]:
+        x = wav.unsqueeze(0).to(self.device)
+        encoded = self.model.encode(x)
+        codes_b, scale = encoded[0]
+        codes = codes_b[0].detach().cpu()
+        return codes, scale
+
+    @torch.no_grad()
+    def decode(self, codes: torch.Tensor, scale) -> np.ndarray:
+        codes_b = codes.unsqueeze(0).to(self.device)
+        wav_out = self.model.decode([(codes_b, scale)])
+        return wav_out.squeeze(0).cpu().squeeze(0).numpy()
+
+
+class ActivityAwareMaskedSpanDataset(Dataset):
+    """Samples non-gap windows and contiguous masks with optional activity guidance."""
+
+    def __init__(
+        self,
+        codes: torch.Tensor,
+        gaps: List[Tuple[int, int]],
+        seq_len: int = 1024,
+        mask_len_range: Tuple[int, int] = (64, 256),
+        mask_token: int = 1024,
+        virtual_size: int = 50_000,
+        activity_per_frame: Optional[np.ndarray] = None,
+        token_change_per_frame: Optional[np.ndarray] = None,
+        activity_low_thr: float = 0.0,
+        activity_high_thr: float = 1.0,
+        weighted_sampling: bool = True,
+        dead_window_min_mean: float = 0.01,
+        dead_window_min_ratio: float = 0.03,
+        regime_probs: Optional[Dict[str, float]] = None,
+        max_resample_tries: int = 12,
+        mask_stride: int = 1,
+        activity_guided_masking: bool = True,
+    ):
+        self.codes = codes
+        self.K, self.F = codes.shape
+        self.gaps = sorted(gaps, key=lambda g: g[0])
+        self.seq_len = seq_len
+        self._mask_len_range = list(mask_len_range)
+        self.mask_token = mask_token
+        self.virtual_size = virtual_size
+        self.activity_per_frame = (
+            np.asarray(activity_per_frame, dtype=np.float32)
+            if activity_per_frame is not None
+            else np.zeros(self.F, dtype=np.float32)
+        )
+        self.token_change_per_frame = (
+            np.asarray(token_change_per_frame, dtype=np.float32)
+            if token_change_per_frame is not None
+            else np.zeros(self.F, dtype=np.float32)
+        )
+        if self.activity_per_frame.shape[0] != self.F:
+            raise ValueError("activity_per_frame length must match frame count")
+        if self.token_change_per_frame.shape[0] != self.F:
+            raise ValueError("token_change_per_frame length must match frame count")
+
+        self.activity_low_thr = float(activity_low_thr)
+        self.activity_high_thr = float(activity_high_thr)
+        self.weighted_sampling = bool(weighted_sampling)
+        self.dead_window_min_mean = float(dead_window_min_mean)
+        self.dead_window_min_ratio = float(dead_window_min_ratio)
+        self.max_resample_tries = int(max(1, max_resample_tries))
+        self.mask_stride = int(max(1, mask_stride))
+        self.activity_guided_masking = bool(activity_guided_masking)
+        rp = regime_probs or {
+            "active": 0.45,
+            "transition": 0.30,
+            "low_activity": 0.15,
+            "uniform": 0.10,
+        }
+        self.regime_probs = {k: float(v) for k, v in rp.items()}
+        p_sum = sum(max(0.0, v) for v in self.regime_probs.values())
+        if p_sum <= 0:
+            self.regime_probs = {
+                "active": 0.45,
+                "transition": 0.30,
+                "low_activity": 0.15,
+                "uniform": 0.10,
+            }
+        else:
+            self.regime_probs = {k: max(0.0, v) / p_sum for k, v in self.regime_probs.items()}
+
+        self.activity_cumsum = _build_cumsum(self.activity_per_frame)
+        self.activity_sq_cumsum = _build_cumsum(self.activity_per_frame * self.activity_per_frame)
+        active_flag = (self.activity_per_frame > self.activity_low_thr).astype(np.float32)
+        self.active_flag_cumsum = _build_cumsum(active_flag)
+        self.activity_diff = np.abs(np.diff(self.activity_per_frame, prepend=self.activity_per_frame[0])).astype(np.float32)
+        self.activity_diff_cumsum = _build_cumsum(self.activity_diff)
+        self.token_change_cumsum = _build_cumsum(self.token_change_per_frame)
+        self.active_indices = np.nonzero(active_flag > 0.5)[0]
+        self.recent_metrics: deque = deque(maxlen=4096)
+
+        self._build_valid_starts_and_weights()
+
+    def _is_non_gap_window(self, s: int) -> bool:
+        window_end = s + self.seq_len
+        for g0, g1 in self.gaps:
+            if s < g1 and window_end > g0:
+                return False
+        return True
+
+    def _build_valid_starts_and_weights(self):
+        self.starts: List[int] = []
+        window_mean = []
+        window_ratio = []
+        rejected_dead = 0
+        non_gap_candidates = 0
+        max_s = self.F - self.seq_len
+        for s in range(max(0, max_s)):
+            if not self._is_non_gap_window(s):
+                continue
+            non_gap_candidates += 1
+            mean_act = float(span_mean_from_cumsum(self.activity_cumsum, np.array([s]), np.array([s + self.seq_len]))[0])
+            active_ratio = float(span_mean_from_cumsum(self.active_flag_cumsum, np.array([s]), np.array([s + self.seq_len]))[0])
+            if self.activity_guided_masking and mean_act < self.dead_window_min_mean and active_ratio < self.dead_window_min_ratio:
+                rejected_dead += 1
+                continue
+            self.starts.append(s)
+            window_mean.append(mean_act)
+            window_ratio.append(active_ratio)
+
+        if len(self.starts) == 0:
+            raise ValueError(
+                f"No valid windows found. seq_len={self.seq_len}, "
+                f"F={self.F}, gaps={self.gaps}. "
+                "Reduce seq_len or check gap boundaries."
+            )
+
+        self.window_mean = np.asarray(window_mean, dtype=np.float32)
+        self.window_active_ratio = np.asarray(window_ratio, dtype=np.float32)
+        self.window_weights = (0.05 + 0.60 * self.window_mean + 0.35 * self.window_active_ratio).astype(np.float32)
+        self.window_weights = np.clip(self.window_weights, 1e-6, None)
+        self.window_weights = self.window_weights / self.window_weights.sum()
+        self.window_weights_t = torch.from_numpy(self.window_weights)
+        self.start_to_index = {s: i for i, s in enumerate(self.starts)}
+
+        self.summary = {
+            "total_valid_starts": int(non_gap_candidates),
+            "starts_after_filter": len(self.starts),
+            "rejected_dead": int(rejected_dead),
+            "avg_window_activity": float(self.window_mean.mean()) if self.window_mean.size else 0.0,
+            "min_window_weight": float(self.window_weights.min()) if self.window_weights.size else 0.0,
+            "max_window_weight": float(self.window_weights.max()) if self.window_weights.size else 0.0,
+            "regime_active_prob": self.regime_probs.get("active", 0.0),
+            "regime_transition_prob": self.regime_probs.get("transition", 0.0),
+            "regime_low_prob": self.regime_probs.get("low_activity", 0.0),
+            "regime_uniform_prob": self.regime_probs.get("uniform", 0.0),
+        }
+
+        logger.info(
+            "Dataset: K=%d, F=%d, gaps=%d, starts=%d (rejected_dead=%d), avg_window_act=%.4f, w[min,max]=[%.6f, %.6f]",
+            self.K,
+            self.F,
+            len(self.gaps),
+            len(self.starts),
+            rejected_dead,
+            self.summary["avg_window_activity"],
+            self.summary["min_window_weight"],
+            self.summary["max_window_weight"],
+        )
+
+    @property
+    def mask_len_range(self) -> Tuple[int, int]:
+        return (self._mask_len_range[0], self._mask_len_range[1])
+
+    def update_mask_range(self, mask_min: int, mask_max: int):
+        """Dynamically update mask range for curriculum learning."""
+        self._mask_len_range[0] = mask_min
+        self._mask_len_range[1] = mask_max
+
+    def __len__(self) -> int:
+        return self.virtual_size
+
+    def _sample_window_start(self) -> int:
+        if self.weighted_sampling and self.window_weights_t.numel() > 1:
+            idx = int(torch.multinomial(self.window_weights_t, 1, replacement=True).item())
+            return self.starts[idx]
+        return random.choice(self.starts)
+
+    def _span_mean(self, csum: np.ndarray, start: np.ndarray, end: np.ndarray) -> np.ndarray:
+        return span_mean_from_cumsum(csum, start, end)
+
+    def _proximity_to_active(self, start: np.ndarray, end: np.ndarray) -> np.ndarray:
+        if self.active_indices.size == 0:
+            return np.zeros(start.shape[0], dtype=np.float32)
+        centers = ((start + end) // 2).astype(np.int64)
+        pos = np.searchsorted(self.active_indices, centers)
+        left_idx = np.clip(pos - 1, 0, self.active_indices.size - 1)
+        right_idx = np.clip(pos, 0, self.active_indices.size - 1)
+        left_dist = np.abs(centers - self.active_indices[left_idx])
+        right_dist = np.abs(centers - self.active_indices[right_idx])
+        min_dist = np.minimum(left_dist, right_dist).astype(np.float32)
+        norm = np.maximum(1.0, self.seq_len / 2.0)
+        return np.clip(1.0 - (min_dist / norm), 0.0, 1.0)
+
+    def _choose_mask_span(self, s: int, mask_len: int) -> Tuple[int, int, Dict[str, float]]:
+        max_m0 = self.seq_len - mask_len
+        if max_m0 <= 0:
+            return 0, mask_len, {
+                "window_mean_activity": float(self.window_mean[0] if self.window_mean.size else 0.0),
+                "window_active_ratio": float(self.window_active_ratio[0] if self.window_active_ratio.size else 0.0),
+                "mask_mean_activity": 0.0,
+                "mask_active_ratio": 0.0,
+                "mask_regime": 3,
+            }
+
+        candidates = np.arange(0, max_m0 + 1, self.mask_stride, dtype=np.int64)
+        if candidates[-1] != max_m0:
+            candidates = np.concatenate([candidates, np.array([max_m0], dtype=np.int64)], axis=0)
+
+        if not self.activity_guided_masking:
+            m0 = int(random.choice(candidates.tolist()))
+            m1 = m0 + mask_len
+            g0 = s + m0
+            g1 = s + m1
+            mask_mean = float(self._span_mean(self.activity_cumsum, np.array([g0]), np.array([g1]))[0])
+            mask_ratio = float(self._span_mean(self.active_flag_cumsum, np.array([g0]), np.array([g1]))[0])
+            return m0, m1, {
+                "mask_mean_activity": mask_mean,
+                "mask_active_ratio": mask_ratio,
+                "mask_regime": 3,
+            }
+
+        regime = choose_mask_regime(self.regime_probs)
+        g0 = s + candidates
+        g1 = g0 + mask_len
+        mean_act = self._span_mean(self.activity_cumsum, g0, g1)
+        ratio = self._span_mean(self.active_flag_cumsum, g0, g1)
+        sq_mean = self._span_mean(self.activity_sq_cumsum, g0, g1)
+        std_act = np.sqrt(np.clip(sq_mean - mean_act * mean_act, 0.0, None)).astype(np.float32)
+        variation = self._span_mean(self.activity_diff_cumsum, g0, g1)
+        token_change = self._span_mean(self.token_change_cumsum, g0, g1)
+        proximity = self._proximity_to_active(g0, g1)
+
+        weights = compute_mask_candidate_weights(
+            regime=regime,
+            mean_activity=mean_act,
+            active_ratio=ratio,
+            std_activity=std_act,
+            variation=variation,
+            proximity=proximity,
+            token_change_mean=token_change,
+            dead_window_min_mean=self.dead_window_min_mean,
+            dead_window_min_ratio=self.dead_window_min_ratio,
+        )
+        w_t = torch.from_numpy(weights)
+        c_idx = int(torch.multinomial(w_t / w_t.sum(), 1, replacement=True).item())
+        m0 = int(candidates[c_idx])
+        m1 = m0 + mask_len
+        regime_code = {
+            "active": 0,
+            "transition": 1,
+            "low_activity": 2,
+            "uniform": 3,
+        }[regime]
+        return m0, m1, {
+            "mask_mean_activity": float(mean_act[c_idx]),
+            "mask_active_ratio": float(ratio[c_idx]),
+            "mask_regime": float(regime_code),
+        }
+
+    def pop_recent_metrics(self, max_items: Optional[int] = None) -> List[Dict[str, float]]:
+        if max_items is None:
+            max_items = len(self.recent_metrics)
+        items = []
+        for _ in range(min(max_items, len(self.recent_metrics))):
+            items.append(self.recent_metrics.popleft())
+        return items
+
+    def __getitem__(self, idx: int):
+        s = self._sample_window_start()
+        x = self.codes[:, s : s + self.seq_len].clone()
+        y = x.clone()
+
+        mask_min, mask_max = self._mask_len_range
+        mask_len = random.randint(mask_min, max(mask_min, mask_max))
+        mask_len = min(mask_len, self.seq_len)
+        m0, m1, mask_meta = self._choose_mask_span(s, mask_len)
+
+        x[:, m0:m1] = self.mask_token
+
+        loss_mask = torch.zeros(self.seq_len, dtype=torch.bool)
+        loss_mask[m0:m1] = True
+
+        w_idx = self.start_to_index.get(s, 0)
+        self.recent_metrics.append(
+            {
+                "window_mean_activity": float(self.window_mean[w_idx]) if self.window_mean.size else 0.0,
+                "window_active_ratio": float(self.window_active_ratio[w_idx]) if self.window_active_ratio.size else 0.0,
+                "mask_mean_activity": float(mask_meta["mask_mean_activity"]),
+                "mask_active_ratio": float(mask_meta["mask_active_ratio"]),
+                "mask_regime": float(mask_meta["mask_regime"]),
+            }
+        )
+
+        return x, y, loss_mask
+
+
+# Backward-compatible alias for any existing imports.
+MaskedSpanDataset = ActivityAwareMaskedSpanDataset
+
+
+class JointCodebookInfiller(nn.Module):
+    def __init__(
+        self,
+        K: int,
+        bins: int,
+        d_model: int = 512,
+        n_heads: int = 8,
+        n_layers: int = 8,
+        max_len: int = 2048,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        self.K = K
+        self.bins = bins
+        self.vocab = bins + 1
+
+        self.emb = nn.ModuleList([nn.Embedding(self.vocab, d_model) for _ in range(K)])
+        self.pos = nn.Embedding(max_len, d_model)
+
+        enc_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=n_heads,
+            dim_feedforward=4 * d_model,
+            dropout=dropout,
+            batch_first=True,
+            activation="gelu",
+            norm_first=True,
+        )
+        self.enc = nn.TransformerEncoder(enc_layer, num_layers=n_layers)
+        self.head = nn.ModuleList([nn.Linear(d_model, bins) for _ in range(K)])
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, K, T = x.shape
+        pos = torch.arange(T, device=x.device).unsqueeze(0).expand(B, T)
+        h = self.pos(pos)
+        for k in range(K):
+            h = h + self.emb[k](x[:, k, :])
+        h = self.enc(h)
+        logits = torch.stack([self.head[k](h) for k in range(K)], dim=1)
+        return logits
+
+
+class Trainer:
+    def __init__(self, cfg: TrainConfig):
+        self.cfg = cfg
+        self.device = resolve_device(cfg.device)
+        set_seed(cfg.seed)
+        logger.info("Device: %s", self.device)
+
+        cfg.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        cfg.tb_dir.mkdir(parents=True, exist_ok=True)
+        cfg.samples_dir.mkdir(parents=True, exist_ok=True)
+        self.writer = SummaryWriter(log_dir=str(cfg.tb_dir))
+
+        self._log_hparams()
+        self._load_audio()
+        self._build_dataset()
+        self._build_model()
+        self._build_optimizer()
+
+        self.global_step = 0
+        self.best_loss = float("inf")
+
+        # Curriculum state
+        if cfg.curriculum:
+            self._init_curriculum()
+
+    def _log_hparams(self):
+        cfg = self.cfg
+        hparams = {k: v for k, v in vars(cfg).items() if not k.startswith("_") and isinstance(v, (int, float, str, bool))}
+        hparams_safe = {}
+        for k, v in hparams.items():
+            if v is None:
+                continue
+            hparams_safe[k] = v
+        logger.info("=== Hyperparameters ===")
+        for k, v in sorted(hparams_safe.items()):
+            logger.info("  %-20s = %s", k, v)
+        logger.info("=======================")
+        self.writer.add_text("hparams", "\n".join(f"{k} = {v}" for k, v in sorted(hparams_safe.items())), 0)
+        self.writer.add_hparams(
+            hparams_safe,
+            {"hparam/placeholder": 0.0},
+            run_name=".",
+        )
+
+    def _load_audio(self):
+        import soundfile as sf
+        import librosa
+
+        cfg = self.cfg
+        logger.info("Loading audio: %s", cfg.wav_path)
+
+        audio, sr = sf.read(cfg.wav_path, always_2d=True)
+        audio = audio.astype(np.float32).mean(axis=1)
+        if sr != cfg.target_sr:
+            audio = librosa.resample(audio, orig_sr=sr, target_sr=cfg.target_sr)
+        wav = torch.from_numpy(audio).unsqueeze(0)
+        wav = wav / (wav.abs().max() + 1e-9)
+
+        self.wav = wav
+        self.duration_s = wav.shape[-1] / cfg.target_sr
+        logger.info("Audio: %.1fs @ %dHz, samples=%d", self.duration_s, cfg.target_sr, wav.shape[-1])
+
+        self.encoder = AudioEncoder(cfg.bandwidth, self.device)
+        self.codes, self.scale = self.encoder.encode(wav)
+        self.K, self.frames = self.codes.shape
+        self.bins = self.encoder.bins
+        self.mask_token = self.encoder.mask_token
+
+        rms = compute_rms_per_frame(wav, self.frames)
+        token_change = compute_token_change_per_frame(self.codes)
+        rms_norm = normalize_robust(rms)
+        token_change_norm = normalize_robust(token_change)
+        activity_raw = 0.65 * rms_norm + 0.35 * token_change_norm
+        activity = smooth_1d(activity_raw, self.cfg.activity_smooth_kernel)
+
+        self.rms_per_frame = rms_norm.astype(np.float32)
+        self.token_change_per_frame = token_change_norm.astype(np.float32)
+        self.activity_per_frame = np.clip(activity.astype(np.float32), 0.0, 1.0)
+
+        self.activity_low_thr = float(np.quantile(self.activity_per_frame, self.cfg.activity_low_quantile))
+        self.activity_high_thr = float(np.quantile(self.activity_per_frame, self.cfg.activity_high_quantile))
+        self.activity_cumsum = _build_cumsum(self.activity_per_frame)
+        self.activity_active_cumsum = _build_cumsum((self.activity_per_frame > self.activity_low_thr).astype(np.float32))
+
+        fps = self.frames / self.duration_s
+
+        # --- Multi-gap support ---
+        # gaps_f: list of (g0, g1) frame intervals for real gaps
+        self.gaps_f: List[Tuple[int, int]] = []
+
+        if hasattr(cfg, '_annotation') and cfg._annotation is not None:
+            ann = cfg._annotation
+            if "gaps" in ann:
+                # New multi-gap format
+                for g in ann["gaps"]:
+                    g0 = max(0, min(self.frames, int(round(g["gap_start_s"] * fps))))
+                    g1 = max(0, min(self.frames, int(round(g["gap_end_s"] * fps))))
+                    self.gaps_f.append((g0, g1))
+                logger.info("Loaded %d gaps from annotation (new format):", len(self.gaps_f))
+            elif "gap" in ann:
+                # Old single-gap format
+                g = ann["gap"]
+                g0 = max(0, min(self.frames, int(round(g["gap_start_s"] * fps))))
+                g1 = max(0, min(self.frames, int(round(g["gap_end_s"] * fps))))
+                self.gaps_f.append((g0, g1))
+                logger.info("Loaded 1 gap from annotation (old format):")
+        else:
+            # Fallback: use gap_start_s/gap_end_s from config
+            g0 = max(0, min(self.frames, int(round(cfg.gap_start_s * fps))))
+            g1 = max(0, min(self.frames, int(round(cfg.gap_end_s * fps))))
+            self.gaps_f.append((g0, g1))
+            logger.info("Loaded 1 gap from config (gap_start_s/gap_end_s):")
+
+        # Log all gap frame ranges
+        for i, (g0, g1) in enumerate(self.gaps_f):
+            gap_dur = (g1 - g0) / fps
+            logger.info("  Gap %d: frames [%d, %d) = %.2fs", i, g0, g1, gap_dur)
+
+        self.largest_gap_frames = max(g1 - g0 for g0, g1 in self.gaps_f)
+        logger.info(
+            "Codes: K=%d, F=%d, bins=%d, largest_gap_frames=%d",
+            self.K, self.frames, self.bins, self.largest_gap_frames,
+        )
+        logger.info(
+            "Activity: low_thr=%.4f (q=%.2f), high_thr=%.4f (q=%.2f)",
+            self.activity_low_thr,
+            self.cfg.activity_low_quantile,
+            self.activity_high_thr,
+            self.cfg.activity_high_quantile,
+        )
+
+        # For backward compat, keep gap_f0/gap_f1 pointing to first gap
+        self.gap_f0 = self.gaps_f[0][0]
+        self.gap_f1 = self.gaps_f[0][1]
+
+    def _build_dataset(self):
+        cfg = self.cfg
+        self.dataset = ActivityAwareMaskedSpanDataset(
+            codes=self.codes,
+            gaps=self.gaps_f,
+            seq_len=cfg.seq_len,
+            mask_len_range=(cfg.mask_len_min, cfg.mask_len_max),
+            mask_token=self.mask_token,
+            activity_per_frame=self.activity_per_frame,
+            token_change_per_frame=self.token_change_per_frame,
+            activity_low_thr=self.activity_low_thr,
+            activity_high_thr=self.activity_high_thr,
+            weighted_sampling=cfg.weighted_sampling,
+            dead_window_min_mean=cfg.dead_window_min_mean,
+            dead_window_min_ratio=cfg.dead_window_min_ratio,
+            regime_probs={
+                "active": cfg.regime_active_prob,
+                "transition": cfg.regime_transition_prob,
+                "low_activity": cfg.regime_low_prob,
+                "uniform": cfg.regime_uniform_prob,
+            },
+            mask_stride=cfg.mask_stride,
+            activity_guided_masking=cfg.activity_guided_masking,
+        )
+        self.dataloader = DataLoader(
+            self.dataset,
+            batch_size=cfg.batch_size,
+            shuffle=True,
+            num_workers=cfg.num_workers,
+            pin_memory=(self.device.type == "cuda"),
+            drop_last=True,
+        )
+        if hasattr(self.dataset, "summary"):
+            logger.info("Dataset sampling summary: %s", self.dataset.summary)
+            for key, value in self.dataset.summary.items():
+                if isinstance(value, (int, float)):
+                    self.writer.add_scalar(f"dataset/{key}", float(value), 0)
+        self.writer.add_scalar("train/activity_low_thr", self.activity_low_thr, 0)
+        self.writer.add_scalar("train/activity_high_thr", self.activity_high_thr, 0)
+
+    def _build_model(self):
+        cfg = self.cfg
+        self.model = JointCodebookInfiller(
+            K=self.K,
+            bins=self.bins,
+            d_model=cfg.d_model,
+            n_heads=cfg.n_heads,
+            n_layers=cfg.n_layers,
+            max_len=cfg.max_len,
+            dropout=cfg.dropout,
+        ).to(self.device)
+
+        n_params = sum(p.numel() for p in self.model.parameters())
+        logger.info("Model params: %.2fM", n_params / 1e6)
+        self.writer.add_scalar("model/params_M", n_params / 1e6, 0)
+
+    def _build_optimizer(self):
+        cfg = self.cfg
+        self.optimizer = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=cfg.lr,
+            weight_decay=cfg.weight_decay,
+            betas=cfg.betas,
+        )
+        self.scaler = torch.amp.GradScaler(enabled=(self.device.type == "cuda"))
+
+    # --- Curriculum learning ---
+
+    def _init_curriculum(self):
+        cfg = self.cfg
+        self.curriculum_start = cfg.curriculum_start_mask if cfg.curriculum_start_mask is not None \
+            else min(cfg.mask_len_max, 128)
+        self.curriculum_end = cfg.curriculum_end_mask if cfg.curriculum_end_mask is not None \
+            else self.largest_gap_frames
+        self.curriculum_warmup_steps = int(cfg.curriculum_warmup_frac * cfg.total_steps)
+
+        logger.info(
+            "Curriculum enabled: start_mask=%d, end_mask=%d, warmup_steps=%d, schedule=%s",
+            self.curriculum_start, self.curriculum_end,
+            self.curriculum_warmup_steps, cfg.curriculum_schedule,
+        )
+
+    def _curriculum_update(self, step: int):
+        """Update mask range based on curriculum progress."""
+        cfg = self.cfg
+        warmup = self.curriculum_warmup_steps
+        total = cfg.total_steps
+
+        if step <= warmup:
+            progress = 0.0
+        else:
+            progress = min(1.0, (step - warmup) / max(1, total - warmup))
+
+        if cfg.curriculum_schedule == "cosine":
+            # Cosine: slow start, accelerate, slow finish
+            progress = 0.5 * (1.0 - math.cos(math.pi * progress))
+        # else: linear (progress stays as-is)
+
+        mask_len_max_current = int(
+            self.curriculum_start + (self.curriculum_end - self.curriculum_start) * progress
+        )
+        mask_len_max_current = max(self.curriculum_start, min(self.curriculum_end, mask_len_max_current))
+
+        mask_len_min_current = max(32, mask_len_max_current // 4)
+
+        # Update dataset mask range
+        self.dataset.update_mask_range(mask_len_min_current, mask_len_max_current)
+
+        # Log to TensorBoard
+        self.writer.add_scalar("curriculum/progress", progress, step)
+        self.writer.add_scalar("curriculum/mask_len_min", mask_len_min_current, step)
+        self.writer.add_scalar("curriculum/mask_len_max", mask_len_max_current, step)
+        self.writer.add_scalar("curriculum/largest_gap_frames", self.largest_gap_frames, step)
+
+        return mask_len_min_current, mask_len_max_current, progress
+
+    # --- LR scheduling ---
+
+    def _get_lr(self, step: int) -> float:
+        cfg = self.cfg
+        if step < cfg.warmup_steps:
+            return cfg.lr * step / max(1, cfg.warmup_steps)
+        progress = (step - cfg.warmup_steps) / max(1, cfg.total_steps - cfg.warmup_steps)
+        return cfg.lr * 0.5 * (1.0 + math.cos(math.pi * progress))
+
+    def _set_lr(self, lr: float):
+        for pg in self.optimizer.param_groups:
+            pg["lr"] = lr
+
+    def _compute_loss(self, logits: torch.Tensor, y: torch.Tensor, loss_mask: torch.Tensor) -> torch.Tensor:
+        B, K, T, V = logits.shape
+        logits_flat = logits.permute(0, 2, 1, 3).reshape(B * T * K, V)
+        y_flat = y.permute(0, 2, 1).reshape(B * T * K)
+        mask_bt = loss_mask.reshape(B * T)
+        mask_btk = mask_bt.repeat_interleave(K)
+        return F.cross_entropy(logits_flat[mask_btk], y_flat[mask_btk])
+
+    def save_checkpoint(self, tag: str = "latest"):
+        path = self.cfg.checkpoint_dir / f"{tag}.pt"
+        rng_state = {
+            "python": random.getstate(),
+            "numpy": np.random.get_state(),
+            "torch_cpu": torch.random.get_rng_state(),
+        }
+        if torch.cuda.is_available():
+            rng_state["torch_cuda"] = torch.cuda.get_rng_state_all()
+        torch.save(
+            {
+                "step": self.global_step,
+                "model": self.model.state_dict(),
+                "optimizer": self.optimizer.state_dict(),
+                "scaler": self.scaler.state_dict(),
+                "best_loss": self.best_loss,
+                "config": vars(self.cfg),
+                "rng_state": rng_state,
+            },
+            path,
+        )
+        logger.info("Saved checkpoint: %s (step %d)", path, self.global_step)
+
+    def load_checkpoint(self, path: str):
+        ckpt = torch.load(path, map_location=self.device, weights_only=False)
+        self.model.load_state_dict(ckpt["model"])
+        self.optimizer.load_state_dict(ckpt["optimizer"])
+        self.scaler.load_state_dict(ckpt["scaler"])
+        self.global_step = ckpt["step"]
+        self.best_loss = ckpt.get("best_loss", float("inf"))
+        if "rng_state" in ckpt:
+            rng = ckpt["rng_state"]
+            random.setstate(rng["python"])
+            np.random.set_state(rng["numpy"])
+            cpu_rng = rng["torch_cpu"]
+            if not isinstance(cpu_rng, torch.ByteTensor):
+                cpu_rng = cpu_rng.cpu().byte() if hasattr(cpu_rng, 'cpu') else torch.ByteTensor(cpu_rng)
+            torch.random.set_rng_state(cpu_rng)
+            if torch.cuda.is_available() and "torch_cuda" in rng:
+                cuda_states = rng["torch_cuda"]
+                cuda_states = [s.cpu() if s.device.type != 'cpu' else s for s in cuda_states]
+                torch.cuda.set_rng_state_all(cuda_states)
+        logger.info("Loaded checkpoint: %s (step %d)", path, self.global_step)
+
+    def train(self):
+        cfg = self.cfg
+        self.model.train()
+        use_amp = self.device.type == "cuda"
+
+        running_loss = 0.0
+        running_acc = 0.0
+        running_acc5 = 0.0
+        running_ppl = 0.0
+        running_nll = 0.0
+        running_count = 0
+        t0 = time.time()
+        data_iter = iter(self.dataloader)
+
+        logger.info("Starting training for %d steps", cfg.total_steps)
+
+        pbar = tqdm(
+            range(self.global_step + 1, cfg.total_steps + 1),
+            desc="Training",
+            initial=self.global_step,
+            total=cfg.total_steps,
+            unit="step",
+        )
+        for step in pbar:
+            self.global_step = step
+
+            # Curriculum update (before sampling)
+            if cfg.curriculum:
+                cur_min, cur_max, cur_progress = self._curriculum_update(step)
+
+            try:
+                x, y, loss_mask = next(data_iter)
+            except StopIteration:
+                data_iter = iter(self.dataloader)
+                x, y, loss_mask = next(data_iter)
+
+            x = x.to(self.device, non_blocking=True)
+            y = y.to(self.device, non_blocking=True)
+            loss_mask = loss_mask.to(self.device, non_blocking=True).bool()
+
+            lr = self._get_lr(step)
+            self._set_lr(lr)
+
+            with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=use_amp):
+                logits = self.model(x)
+                loss = self._compute_loss(logits, y, loss_mask)
+
+            self.optimizer.zero_grad(set_to_none=True)
+            self.scaler.scale(loss).backward()
+            self.scaler.unscale_(self.optimizer)
+            grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), cfg.grad_clip).item()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+
+            with torch.no_grad():
+                B, K, T, V = logits.shape
+                if loss_mask.dim() == 1:
+                    lm = loss_mask.unsqueeze(0).expand(B, -1)
+                else:
+                    lm = loss_mask
+                mask_exp = lm.unsqueeze(1).expand(B, K, T)
+
+                preds = logits.argmax(dim=-1)
+                n_masked = mask_exp.sum().item()
+                if n_masked > 0:
+                    correct = (preds[mask_exp] == y[mask_exp]).float().mean().item()
+                    top5 = logits.topk(5, dim=-1).indices
+                    hits5 = (top5 == y.unsqueeze(-1)).any(dim=-1)
+                    acc5 = hits5[mask_exp].float().mean().item()
+                else:
+                    correct = 0.0
+                    acc5 = 0.0
+
+            loss_val = loss.item()
+            nll = loss_val
+            ppl = math.exp(min(loss_val, 20.0))
+
+            running_loss += loss_val
+            running_acc += correct
+            running_acc5 += acc5
+            running_ppl += ppl
+            running_nll += nll
+            running_count += 1
+
+            self.writer.add_scalar("train/loss", loss_val, step)
+            self.writer.add_scalar("train/acc_top1", correct, step)
+            self.writer.add_scalar("train/acc_top5", acc5, step)
+            self.writer.add_scalar("train/ppl", ppl, step)
+            self.writer.add_scalar("train/nll", nll, step)
+            self.writer.add_scalar("train/lr", lr, step)
+            self.writer.add_scalar("train/grad_norm", grad_norm, step)
+
+            if hasattr(self.dataset, "pop_recent_metrics"):
+                sample_metrics = self.dataset.pop_recent_metrics(cfg.batch_size)
+            else:
+                sample_metrics = []
+            if sample_metrics:
+                w_mean = float(np.mean([m["window_mean_activity"] for m in sample_metrics]))
+                w_ratio = float(np.mean([m["window_active_ratio"] for m in sample_metrics]))
+                m_mean = float(np.mean([m["mask_mean_activity"] for m in sample_metrics]))
+                m_ratio = float(np.mean([m["mask_active_ratio"] for m in sample_metrics]))
+                m_regime = float(np.mean([m["mask_regime"] for m in sample_metrics]))
+                self.writer.add_scalar("train/sample_window_mean_activity", w_mean, step)
+                self.writer.add_scalar("train/sample_window_active_ratio", w_ratio, step)
+                self.writer.add_scalar("train/sample_mask_mean_activity", m_mean, step)
+                self.writer.add_scalar("train/sample_mask_active_ratio", m_ratio, step)
+                self.writer.add_scalar("train/sample_mask_regime", m_regime, step)
+
+                reg_hist = defaultdict(int)
+                for m in sample_metrics:
+                    reg_hist[int(m["mask_regime"])] += 1
+                total_reg = max(1, len(sample_metrics))
+                for reg_id, reg_name in [(0, "active"), (1, "transition"), (2, "low_activity"), (3, "uniform")]:
+                    self.writer.add_scalar(f"train/sample_mask_regime_frac_{reg_name}", reg_hist[reg_id] / total_reg, step)
+
+            postfix = dict(loss=f"{loss_val:.4f}", acc=f"{correct:.3f}", ppl=f"{ppl:.1f}", lr=f"{lr:.2e}")
+            if cfg.curriculum:
+                postfix["mask"] = f"{cur_min}-{cur_max}"
+            pbar.set_postfix(**postfix)
+
+            if step % cfg.log_every == 0:
+                avg_loss = running_loss / running_count
+                avg_acc = running_acc / running_count
+                avg_acc5 = running_acc5 / running_count
+                avg_ppl = running_ppl / running_count
+                avg_nll = running_nll / running_count
+                dt = time.time() - t0
+                steps_per_sec = running_count / dt
+
+                cur_info = ""
+                if cfg.curriculum:
+                    cur_info = f" | mask [{cur_min},{cur_max}]"
+
+                # logger.info(
+                #     "step %5d | loss %.4f | acc1 %.3f | acc5 %.3f | ppl %.1f | lr %.2e | grad_norm %.2f | %.1f steps/s%s",
+                #     step, avg_loss, avg_acc, avg_acc5, avg_ppl, lr, grad_norm, steps_per_sec, cur_info,
+                # )
+                self.writer.add_scalar("train/avg_loss", avg_loss, step)
+                self.writer.add_scalar("train/avg_accuracy", avg_acc, step)
+                self.writer.add_scalar("train/avg_acc_top1", avg_acc, step)
+                self.writer.add_scalar("train/avg_acc_top5", avg_acc5, step)
+                self.writer.add_scalar("train/avg_ppl", avg_ppl, step)
+                self.writer.add_scalar("train/avg_nll", avg_nll, step)
+                self.writer.add_scalar("train/steps_per_sec", steps_per_sec, step)
+
+                if avg_loss < self.best_loss:
+                    self.best_loss = avg_loss
+                    self.save_checkpoint("best")
+
+                running_loss = 0.0
+                running_acc = 0.0
+                running_acc5 = 0.0
+                running_ppl = 0.0
+                running_nll = 0.0
+                running_count = 0
+                t0 = time.time()
+
+            if step % cfg.save_every == 0:
+                self.save_checkpoint("latest")
+                self.save_checkpoint(f"step_{step}")
+
+            if cfg.test_fill_every > 0 and step % cfg.test_fill_every == 0:
+                logger.info("Running test inpaint (all gaps) at step %d", step)
+                wav_filled = self.inpaint_all_gaps()
+                self.log_spectrograms(wav_filled)
+                self.model.train()
+
+        self.save_checkpoint("final")
+        self.writer.close()
+        logger.info("Training complete. Best loss: %.4f", self.best_loss)
+
+    # --- Inpainting ---
+
+    @torch.no_grad()
+    def inpaint_all_gaps(self, output_path: Optional[str] = None) -> np.ndarray:
+        """Inpaint ALL gaps sequentially.
+
+        For each gap:
+        1) Compute maximum possible context within max_len
+        2) Extract window [L, R]
+        3) Mask the gap region
+        4) Run iterative refinement
+        5) Write predicted tokens back into codes
+
+        Returns the reconstructed wav as a numpy array.
+        """
+        cfg = self.cfg
+        self.model.eval()
+
+        codes_filled = self.codes.clone()
+
+        for i, (g0, g1) in enumerate(self.gaps_f):
+            gap_len = g1 - g0
+            logger.info(
+                "Inpainting gap %d/%d: frames [%d, %d), len=%d",
+                i + 1, len(self.gaps_f), g0, g1, gap_len,
+            )
+
+            # Compute maximum context within max_len
+            if cfg.ctx_left is not None and cfg.ctx_right is not None:
+                ctx_left = cfg.ctx_left
+                ctx_right = cfg.ctx_right
+            else:
+                budget = max(0, cfg.max_len - gap_len - 16)
+                ctx_left = budget // 2
+                ctx_right = budget - ctx_left
+
+            L = max(0, g0 - ctx_left)
+            R = min(self.frames, g1 + ctx_right)
+            local_g0 = g0 - L
+            local_g1 = g1 - L
+
+            logger.info(
+                "  Context window: [%d, %d), local gap [%d, %d), window_len=%d",
+                L, R, local_g0, local_g1, R - L,
+            )
+
+            x = codes_filled[:, L:R].clone()
+            x[:, local_g0:local_g1] = self.mask_token
+            xb = x.unsqueeze(0).to(self.device)
+
+            for it in range(cfg.inpaint_iters):
+                logits = self.model(xb)[0]
+                pred = logits.argmax(dim=-1)
+                xb[0, :, local_g0:local_g1] = pred[:, local_g0:local_g1]
+
+            # Write back
+            codes_filled[:, L:R] = xb[0].cpu()
+
+        wav_filled = self.encoder.decode(codes_filled, self.scale)
+
+        if output_path:
+            import soundfile as sf
+            sf.write(output_path, wav_filled, cfg.target_sr)
+            logger.info("Saved inpainted audio: %s", output_path)
+
+        return wav_filled
+
+    @torch.no_grad()
+    def inpaint(self, output_path: Optional[str] = None) -> np.ndarray:
+        """Backward-compatible single-call: delegates to inpaint_all_gaps."""
+        return self.inpaint_all_gaps(output_path=output_path)
+
+    def _make_spectrogram_figure(self, audio: np.ndarray, title: str, sr: int, n_fft: int = 2048, hop: int = 512):
+        y = torch.tensor(audio, dtype=torch.float32)
+        S = torch.stft(y, n_fft=n_fft, hop_length=hop, win_length=n_fft,
+                        window=torch.hann_window(n_fft), return_complex=True)
+        S_db = 20.0 * np.log10(np.abs(S.numpy()) + 1e-7)
+        fig, ax = plt.subplots(1, 1, figsize=(12, 4))
+        im = ax.imshow(S_db, origin="lower", aspect="auto",
+                        extent=[0, audio.shape[-1] / sr, 0, sr / 2])
+        ax.set_title(title)
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Frequency (Hz)")
+        fig.colorbar(im, ax=ax, label="dB")
+        fig.tight_layout()
+        return fig
+
+    def log_spectrograms(self, wav_filled: np.ndarray):
+        sr = self.cfg.target_sr
+        wav_orig = self.wav.squeeze(0).numpy()
+
+        fig_orig = self._make_spectrogram_figure(wav_orig, "Original (gapped)", sr)
+        self.writer.add_figure("audio/spectrogram_original_gapped", fig_orig, self.global_step)
+        plt.close(fig_orig)
+
+        fig_recon = self._make_spectrogram_figure(wav_filled, "Reconstructed (infilled)", sr)
+        self.writer.add_figure("audio/spectrogram_reconstructed", fig_recon, self.global_step)
+        plt.close(fig_recon)
+
+        self.writer.flush()
+        logger.info("Logged spectrograms to TensorBoard")
+
+        # Goal E: save reconstructed wav
+        import soundfile as sf
+        wav_path = self.cfg.samples_dir / f"infilled_step_{self.global_step}.wav"
+        sf.write(str(wav_path), wav_filled, sr)
+        logger.info("Saved reconstructed wav: %s", wav_path)
+
+
+def load_annotation(ds_dir: str, sample: str) -> dict:
+    json_path = Path(ds_dir) / f"{sample}.json"
+    if not json_path.exists():
+        raise FileNotFoundError(f"Annotation not found: {json_path}")
+    with open(json_path) as f:
+        return json.load(f)
+
+
+def load_yaml_config(path: str) -> Dict[str, Any]:
+    try:
+        import yaml
+    except Exception as e:
+        raise RuntimeError(
+            "YAML config requested but PyYAML is not installed. Install with: pip install pyyaml"
+        ) from e
+
+    with open(path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError(f"Config must be a mapping at top-level: {path}")
+    return data
+
+
+def _set_cfg_field(cfg: TrainConfig, key: str, value: Any, source: str):
+    name = key.replace("-", "_")
+    if not hasattr(cfg, name):
+        logger.warning("Ignoring unknown config key from %s: %s", source, key)
+        return
+    if name == "betas" and isinstance(value, list):
+        value = tuple(value)
+    setattr(cfg, name, value)
+
+
+def apply_mapping_to_cfg(cfg: TrainConfig, mapping: Dict[str, Any], source: str):
+    for key, value in mapping.items():
+        _set_cfg_field(cfg, key, value, source)
+
+
+def apply_auto_hparams(cfg: TrainConfig, ann: dict):
+    """Apply auto hyperparameters from annotation JSON.
+
+    Supports both old single-gap and new multi-gap annotation formats.
+    """
+    # Load gap timing info
+    if "gaps" in ann:
+        # New multi-gap format: use first gap for gap_start/end_s (backward compat)
+        first_gap = ann["gaps"][0]
+        cfg.gap_start_s = first_gap["gap_start_s"]
+        cfg.gap_end_s = first_gap["gap_end_s"]
+    elif "gap" in ann:
+        # Old format
+        gap = ann["gap"]
+        cfg.gap_start_s = gap["gap_start_s"]
+        cfg.gap_end_s = gap["gap_end_s"]
+
+    cfg.target_sr = ann["sr"]
+
+    rec = ann["recommendations"]["token_based"]
+    if rec is not None:
+        cfg.seq_len = rec["seq_len_frames"]
+        cfg.mask_len_min = rec["mask_len_min_frames"]
+        cfg.mask_len_max = rec["mask_len_max_frames"]
+        cfg.max_len = max(cfg.max_len, rec["max_len_frames_required"])
+
+        if "ctx_left_frames" in rec:
+            cfg.ctx_left = rec["ctx_left_frames"]
+        if "ctx_right_frames" in rec:
+            cfg.ctx_right = rec["ctx_right_frames"]
+
+        # If curriculum and we have largest_gap_frames, set end mask
+        if rec.get("largest_gap_frames") is not None:
+            cfg.curriculum_end_mask = rec["largest_gap_frames"]
+
+    if "encodec_stats_full_audio" in ann:
+        stats = ann["encodec_stats_full_audio"]
+        if stats is not None:
+            cfg.bandwidth = stats["bandwidth_kbps"]
+
+    logger.info(
+        "Auto-hparams applied from annotation: seq_len=%d, mask=[%d,%d], max_len=%d, ctx=%s/%s",
+        cfg.seq_len, cfg.mask_len_min, cfg.mask_len_max, cfg.max_len,
+        cfg.ctx_left, cfg.ctx_right,
+    )
+
+
+def parse_args(argv: Optional[List[str]] = None):
+    parser = argparse.ArgumentParser(description="Audio Infiller Training")
+    cfg = TrainConfig()
+
+    parser.add_argument("--config", type=str, default=None, help="Path to YAML config")
+
+    parser.add_argument("--ds-dir", type=str, default=None, help="Dataset directory containing .wav and .json pairs")
+    parser.add_argument("--sample", type=str, default=None, help="Sample name (stem) within ds-dir, e.g. wav_test_gap_5p000s")
+    parser.add_argument("--auto-hparam", action="store_true", help="Use recommended hparams from the annotation JSON")
+
+    parser.add_argument("--wav-path", type=str, default=None, help="Direct wav path (overrides --ds-dir/--sample)")
+    parser.add_argument("--target-sr", type=int, default=None)
+    parser.add_argument("--bandwidth", type=float, default=None)
+    parser.add_argument("--gap-start-s", type=float, default=None)
+    parser.add_argument("--gap-end-s", type=float, default=None)
+
+    parser.add_argument("--d-model", type=int, default=None)
+    parser.add_argument("--n-heads", type=int, default=None)
+    parser.add_argument("--n-layers", type=int, default=None)
+    parser.add_argument("--max-len", type=int, default=None)
+    parser.add_argument("--dropout", type=float, default=None)
+
+    parser.add_argument("--seq-len", type=int, default=None)
+    parser.add_argument("--mask-len-min", type=int, default=None)
+    parser.add_argument("--mask-len-max", type=int, default=None)
+    parser.add_argument("--ctx-left", type=int, default=None)
+    parser.add_argument("--ctx-right", type=int, default=None)
+
+    parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--lr", type=float, default=None)
+    parser.add_argument("--weight-decay", type=float, default=None)
+    parser.add_argument("--betas", nargs=2, type=float, default=None)
+    parser.add_argument("--grad-clip", type=float, default=None)
+    parser.add_argument("--warmup-steps", type=int, default=None)
+    parser.add_argument("--total-steps", type=int, default=None)
+    parser.add_argument("--log-every", type=int, default=None)
+    parser.add_argument("--save-every", type=int, default=None)
+    parser.add_argument("--test-fill-every", type=int, default=None, help="Run inpaint + log spectrogram every N steps (0=disabled)")
+    parser.add_argument("--num-workers", type=int, default=None)
+
+    parser.add_argument("--output-dir", type=str, default=None)
+    parser.add_argument("--run-name", type=str, default=None)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--device", type=str, default=None)
+
+    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
+    parser.add_argument("--inpaint-only", action="store_true", help="Skip training, only run inpainting")
+    parser.add_argument("--inpaint-iters", type=int, default=None)
+    parser.add_argument("--inpaint-output", type=str, default=None)
+
+    # Curriculum learning args
+    parser.add_argument("--curriculum", action="store_true", help="Enable curriculum learning (grow mask span)")
+    parser.add_argument("--curriculum-start-mask", type=int, default=None,
+                        help="Initial max mask length (default: min(mask_len_max, 128))")
+    parser.add_argument("--curriculum-end-mask", type=int, default=None,
+                        help="Final max mask length (default: largest_gap_frames)")
+    parser.add_argument("--curriculum-warmup-frac", type=float, default=None,
+                        help="Fraction of total steps for curriculum warmup (default 0.1)")
+    parser.add_argument("--curriculum-schedule", choices=["linear", "cosine"],
+                        default=None,
+                        help="Curriculum interpolation schedule (default: linear)")
+
+    parser.add_argument("--activity-smooth-kernel", type=int, default=None)
+    parser.add_argument("--activity-low-quantile", type=float, default=None)
+    parser.add_argument("--activity-high-quantile", type=float, default=None)
+    parser.add_argument("--weighted-sampling", dest="weighted_sampling", action="store_true")
+    parser.add_argument("--no-weighted-sampling", dest="weighted_sampling", action="store_false")
+    parser.set_defaults(weighted_sampling=None)
+    parser.add_argument("--dead-window-min-mean", type=float, default=None)
+    parser.add_argument("--dead-window-min-ratio", type=float, default=None)
+    parser.add_argument("--regime-active-prob", type=float, default=None)
+    parser.add_argument("--regime-transition-prob", type=float, default=None)
+    parser.add_argument("--regime-low-prob", type=float, default=None)
+    parser.add_argument("--regime-uniform-prob", type=float, default=None)
+    parser.add_argument("--mask-stride", type=int, default=None)
+    parser.add_argument("--activity-guided-masking", dest="activity_guided_masking", action="store_true")
+    parser.add_argument("--no-activity-guided-masking", dest="activity_guided_masking", action="store_false")
+    parser.set_defaults(activity_guided_masking=None)
+
+    args = parser.parse_args(argv)
+
+    if args.config:
+        cfg.config = args.config
+        cfg_map = load_yaml_config(args.config)
+        apply_mapping_to_cfg(cfg, cfg_map, args.config)
+
+    cli_overrides = {
+        "ds_dir": args.ds_dir,
+        "sample": args.sample,
+        "wav_path": args.wav_path,
+        "target_sr": args.target_sr,
+        "bandwidth": args.bandwidth,
+        "gap_start_s": args.gap_start_s,
+        "gap_end_s": args.gap_end_s,
+        "d_model": args.d_model,
+        "n_heads": args.n_heads,
+        "n_layers": args.n_layers,
+        "max_len": args.max_len,
+        "dropout": args.dropout,
+        "seq_len": args.seq_len,
+        "mask_len_min": args.mask_len_min,
+        "mask_len_max": args.mask_len_max,
+        "ctx_left": args.ctx_left,
+        "ctx_right": args.ctx_right,
+        "batch_size": args.batch_size,
+        "lr": args.lr,
+        "betas": tuple(args.betas) if args.betas is not None else None,
+        "weight_decay": args.weight_decay,
+        "grad_clip": args.grad_clip,
+        "warmup_steps": args.warmup_steps,
+        "total_steps": args.total_steps,
+        "log_every": args.log_every,
+        "save_every": args.save_every,
+        "test_fill_every": args.test_fill_every,
+        "num_workers": args.num_workers,
+        "output_dir": args.output_dir,
+        "run_name": args.run_name,
+        "seed": args.seed,
+        "device": args.device,
+        "resume": args.resume,
+        "inpaint_iters": args.inpaint_iters,
+        "inpaint_output": args.inpaint_output,
+        "curriculum_start_mask": args.curriculum_start_mask,
+        "curriculum_end_mask": args.curriculum_end_mask,
+        "curriculum_warmup_frac": args.curriculum_warmup_frac,
+        "curriculum_schedule": args.curriculum_schedule,
+        "activity_smooth_kernel": args.activity_smooth_kernel,
+        "activity_low_quantile": args.activity_low_quantile,
+        "activity_high_quantile": args.activity_high_quantile,
+        "weighted_sampling": args.weighted_sampling,
+        "dead_window_min_mean": args.dead_window_min_mean,
+        "dead_window_min_ratio": args.dead_window_min_ratio,
+        "regime_active_prob": args.regime_active_prob,
+        "regime_transition_prob": args.regime_transition_prob,
+        "regime_low_prob": args.regime_low_prob,
+        "regime_uniform_prob": args.regime_uniform_prob,
+        "mask_stride": args.mask_stride,
+        "activity_guided_masking": args.activity_guided_masking,
+    }
+    for key, value in cli_overrides.items():
+        if value is not None:
+            setattr(cfg, key, value)
+
+    if args.auto_hparam:
+        cfg.auto_hparam = True
+    if args.curriculum:
+        cfg.curriculum = True
+    if args.inpaint_only:
+        cfg.inpaint_only = True
+
+    ann = None
+    if cfg.sample:
+        wav_file = Path(cfg.ds_dir) / f"{cfg.sample}.wav"
+        if not wav_file.exists():
+            parser.error(f"Sample wav not found: {wav_file}")
+        cfg.wav_path = str(wav_file)
+        ann = load_annotation(cfg.ds_dir, cfg.sample)
+
+        # Load gap info (support both old and new format)
+        if "gaps" in ann:
+            first_gap = ann["gaps"][0]
+            cfg.gap_start_s = first_gap["gap_start_s"]
+            cfg.gap_end_s = first_gap["gap_end_s"]
+        elif "gap" in ann:
+            cfg.gap_start_s = ann["gap"]["gap_start_s"]
+            cfg.gap_end_s = ann["gap"]["gap_end_s"]
+
+        cfg.target_sr = ann["sr"]
+        if cfg.auto_hparam:
+            apply_auto_hparams(cfg, ann)
+
+    if cfg.run_name is None:
+        cfg.run_name = cfg.sample if cfg.sample else "infiller"
+
+    # Store annotation for multi-gap loading in Trainer._load_audio
+    cfg._annotation = ann  # type: ignore[attr-defined]
+
+    return cfg, args
+
+
+def main():
+    cfg, args = parse_args()
+    trainer = Trainer(cfg)
+
+    if cfg.resume:
+        trainer.load_checkpoint(cfg.resume)
+
+    if not cfg.inpaint_only:
+        trainer.train()
+
+    out = cfg.inpaint_output or os.path.splitext(cfg.wav_path)[0] + "_infilled.wav"
+    wav_filled = trainer.inpaint_all_gaps(output_path=out)
+    trainer.log_spectrograms(wav_filled)
+
+
+if __name__ == "__main__":
+    main()

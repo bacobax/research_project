@@ -1,0 +1,63 @@
+config: configs/train/multigap.yaml
+ds_dir: data/processed/multigap
+sample: wav_test_multigap_4x_1p0s_2p0s_5p0s_10p0s
+auto_hparam: true
+
+wav_path: data/interim/gapped_audio.wav
+target_sr: 24000
+bandwidth: 6.0
+gap_start_s: 200.0
+gap_end_s: 210.0
+
+d_model: 512
+n_heads: 8
+n_layers: 8
+max_len: 1124
+dropout: 0.1
+
+seq_len: 1124
+mask_len_min: 187
+mask_len_max: 750
+ctx_left: null
+ctx_right: null
+
+batch_size: 16
+lr: 0.0003
+weight_decay: 0.01
+betas: [0.9, 0.95]
+grad_clip: 1.5
+warmup_steps: 7000
+total_steps: 486000
+log_every: 6000
+save_every: 54000
+test_fill_every: 54000
+num_workers: 2
+
+output_dir: outputs/runs
+run_name: longrun_multigap
+seed: 42
+device: auto
+
+resume: null
+inpaint_only: false
+inpaint_iters: 10
+inpaint_output: null
+
+curriculum: true
+curriculum_start_mask: 128
+curriculum_end_mask: 750
+curriculum_warmup_frac: 0.1
+curriculum_schedule: linear
+
+activity_smooth_kernel: 9
+activity_low_quantile: 0.30
+activity_high_quantile: 0.70
+weighted_sampling: true
+dead_window_min_mean: 0.01
+dead_window_min_ratio: 0.03
+regime_active_prob: 0.45
+regime_transition_prob: 0.30
+regime_low_prob: 0.15
+regime_uniform_prob: 0.10
+mask_stride: 1
+activity_guided_masking: true

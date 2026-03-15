@@ -1,0 +1,10 @@
+numpy
+torch
+tensorboard
+matplotlib
+tqdm
+soundfile
+librosa
+encodec
+PyYAML
+torchviz

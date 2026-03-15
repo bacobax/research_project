@@ -1,0 +1,63 @@
+config: configs/train/smoke.yaml
+ds_dir: data/processed/multigap
+sample: null
+auto_hparam: false
+
+wav_path: data/processed/multigap/wav_test_multigap_4x_1p0s_2p0s_5p0s_10p0s.wav
+target_sr: 24000
+bandwidth: 6.0
+gap_start_s: 200.0
+gap_end_s: 210.0
+
+d_model: 256
+n_heads: 4
+n_layers: 4
+max_len: 1124
+dropout: 0.1
+
+seq_len: 1124
+mask_len_min: 64
+mask_len_max: 128
+ctx_left: null
+ctx_right: null
+
+batch_size: 4
+lr: 0.0002
+weight_decay: 0.01
+betas: [0.9, 0.95]
+grad_clip: 1.0
+warmup_steps: 0
+total_steps: 30
+log_every: 5
+save_every: 30
+test_fill_every: 10
+num_workers: 0
+
+output_dir: outputs/runs_test
+run_name: smoketest_multigap
+seed: 42
+device: auto
+
+resume: null
+inpaint_only: false
+inpaint_iters: 3
+inpaint_output: null
+
+curriculum: false
+curriculum_start_mask: null
+curriculum_end_mask: null
+curriculum_warmup_frac: 0.1
+curriculum_schedule: linear
+
+activity_smooth_kernel: 9
+activity_low_quantile: 0.30
+activity_high_quantile: 0.70
+weighted_sampling: true
+dead_window_min_mean: 0.01
+dead_window_min_ratio: 0.03
+regime_active_prob: 0.45
+regime_transition_prob: 0.30
+regime_low_prob: 0.15
+regime_uniform_prob: 0.10
+mask_stride: 1
+activity_guided_masking: true

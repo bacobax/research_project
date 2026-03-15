@@ -1,0 +1,63 @@
+config: configs/train/base.yaml
+ds_dir: data/processed/single_gap
+sample: wav_test_gap_5p000s
+auto_hparam: false
+
+wav_path: data/interim/gapped_audio.wav
+target_sr: 24000
+bandwidth: 6.0
+gap_start_s: 200.0
+gap_end_s: 210.0
+
+d_model: 512
+n_heads: 8
+n_layers: 8
+max_len: 2048
+dropout: 0.1
+
+seq_len: 1024
+mask_len_min: 64
+mask_len_max: 256
+ctx_left: null
+ctx_right: null
+
+batch_size: 16
+lr: 0.0002
+weight_decay: 0.01
+betas: [0.9, 0.95]
+grad_clip: 1.0
+warmup_steps: 200
+total_steps: 3000
+log_every: 100
+save_every: 500
+test_fill_every: 0
+num_workers: 2
+
+output_dir: outputs/runs
+run_name: infiller
+seed: 42
+device: auto
+
+resume: null
+inpaint_only: false
+inpaint_iters: 10
+inpaint_output: null
+
+curriculum: false
+curriculum_start_mask: null
+curriculum_end_mask: null
+curriculum_warmup_frac: 0.1
+curriculum_schedule: linear
+
+activity_smooth_kernel: 9
+activity_low_quantile: 0.30
+activity_high_quantile: 0.70
+weighted_sampling: true
+dead_window_min_mean: 0.01
+dead_window_min_ratio: 0.03
+regime_active_prob: 0.45
+regime_transition_prob: 0.30
+regime_low_prob: 0.15
+regime_uniform_prob: 0.10
+mask_stride: 1
+activity_guided_masking: true

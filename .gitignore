@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
+.mypy_cache/
 
 # Virtual environment
 venv/
@@ -11,17 +13,23 @@ env/
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints
 
-# PyTorch checkpoints and runs
-runs/
-checkpoints/
-*.pt
+# Build / packaging
+build/
+dist/
+*.egg-info/
 
-# Dataset files
-ds/
+# Outputs and training artifacts
+outputs/
+checkpoints/
+tb/
+samples/
+*.pt
+events.out.tfevents.*
 
 # Temporary files
 *.log
 *.tmp
+*.bak
 
 # System files
 .DS_Store
@@ -30,4 +38,5 @@ ds/
 # Audio/video
 *.ts
 
-# Add any other files or directories to ignore
+# Local caches
+.cache/
