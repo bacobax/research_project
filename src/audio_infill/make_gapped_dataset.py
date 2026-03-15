@@ -41,6 +41,112 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import soundfile as sf
 
+from audio_infill.config import load_yaml_config
+
+
+@dataclass
+class DataConfig:
+    config: Optional[str] = None
+    wav: str = "data/raw/wav_test.wav"
+    outdir: str = "data/processed/single_gap"
+    gap_seconds: List[float] = None  # type: ignore[assignment]
+    num_gaps: int = 1
+    min_gap_separation_seconds: float = 1.0
+    target_sr: int = 24000
+    bandwidth: float = 6.0
+    center_mode: str = "random"
+    margin_seconds: float = 2.0
+    seed: int = 42
+    max_len_cap: int = 2048
+    prefer_pow2: bool = False
+    extra_ctx_s: float = 2.0
+
+    def __post_init__(self):
+        if self.gap_seconds is None:
+            self.gap_seconds = [1.0]
+
+
+def validate_data_config(cfg: DataConfig):
+    if not cfg.gap_seconds:
+        raise ValueError("gap_seconds must contain at least one value")
+    if any(float(g) <= 0 for g in cfg.gap_seconds):
+        raise ValueError("gap_seconds values must all be > 0")
+    if cfg.num_gaps <= 0:
+        raise ValueError("num_gaps must be > 0")
+    if cfg.min_gap_separation_seconds < 0:
+        raise ValueError("min_gap_separation_seconds must be >= 0")
+    if cfg.target_sr <= 0:
+        raise ValueError("target_sr must be > 0")
+    if cfg.bandwidth <= 0:
+        raise ValueError("bandwidth must be > 0")
+    if cfg.center_mode not in {"middle", "random"}:
+        raise ValueError("center_mode must be 'middle' or 'random'")
+    if cfg.margin_seconds < 0:
+        raise ValueError("margin_seconds must be >= 0")
+    if cfg.max_len_cap <= 0:
+        raise ValueError("max_len_cap must be > 0")
+    if cfg.extra_ctx_s < 0:
+        raise ValueError("extra_ctx_s must be >= 0")
+
+
+def parse_args(argv: Optional[List[str]] = None) -> DataConfig:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", type=str, default=None, help="Path to YAML dataset config")
+    ap.add_argument("--wav", type=str, default=None, help="Input .wav path")
+    ap.add_argument("--outdir", type=str, default=None, help="Output directory")
+    ap.add_argument("--gap-seconds", nargs="+", type=float, default=None, help="Gap lengths in seconds (list)")
+    ap.add_argument("--num-gaps", type=int, default=None,
+                    help="Number of gaps to insert in a single wav (default 1). "
+                         "If >1, creates multi-gap output.")
+    ap.add_argument("--min-gap-separation-seconds", type=float, default=None,
+                    help="Minimum time separation between gaps (seconds, default 1.0)")
+    ap.add_argument("--target-sr", type=int, default=None, help="Target sample rate for output (default 24000)")
+    ap.add_argument("--bandwidth", type=float, default=None, help="EnCodec target bandwidth kbps (for token stats)")
+    ap.add_argument("--center-mode", choices=["middle", "random"], default=None,
+                    help="How to place the gap center")
+    ap.add_argument("--margin-seconds", type=float, default=None,
+                    help="Minimum distance of gap boundaries from edges (seconds)")
+    ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--max-len-cap", type=int, default=None,
+                    help="Cap for recommended max_len/seq_len in token frames (for learned pos embeddings)")
+    ap.add_argument("--prefer-pow2", dest="prefer_pow2", action="store_true")
+    ap.add_argument("--no-prefer-pow2", dest="prefer_pow2", action="store_false")
+    ap.set_defaults(prefer_pow2=None)
+    ap.add_argument("--extra-ctx-s", type=float, default=None,
+                    help="Extra context (seconds) to include on both sides in recommended seq_len")
+    args = ap.parse_args(argv)
+
+    cfg = DataConfig()
+    if args.config:
+        cfg.config = args.config
+        data = load_yaml_config(args.config)
+        for key, value in data.items():
+            name = key.replace("-", "_")
+            if hasattr(cfg, name):
+                setattr(cfg, name, value)
+
+    overrides = {
+        "wav": args.wav,
+        "outdir": args.outdir,
+        "gap_seconds": args.gap_seconds,
+        "num_gaps": args.num_gaps,
+        "min_gap_separation_seconds": args.min_gap_separation_seconds,
+        "target_sr": args.target_sr,
+        "bandwidth": args.bandwidth,
+        "center_mode": args.center_mode,
+        "margin_seconds": args.margin_seconds,
+        "seed": args.seed,
+        "max_len_cap": args.max_len_cap,
+        "prefer_pow2": args.prefer_pow2,
+        "extra_ctx_s": args.extra_ctx_s,
+    }
+    for key, value in overrides.items():
+        if value is not None:
+            setattr(cfg, key, value)
+
+    validate_data_config(cfg)
+    return cfg
+
 
 def next_pow2(n: int) -> int:
     if n <= 1:
@@ -410,65 +516,44 @@ def recommend_training_lengths_multi(
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--wav", required=True, help="Input .wav path")
-    ap.add_argument("--outdir", required=True, help="Output directory")
-    ap.add_argument("--gap-seconds", nargs="+", type=float, required=True, help="Gap lengths in seconds (list)")
-    ap.add_argument("--num-gaps", type=int, default=1,
-                    help="Number of gaps to insert in a single wav (default 1). "
-                         "If >1, creates multi-gap output.")
-    ap.add_argument("--min-gap-separation-seconds", type=float, default=1.0,
-                    help="Minimum time separation between gaps (seconds, default 1.0)")
-    ap.add_argument("--target-sr", type=int, default=24000, help="Target sample rate for output (default 24000)")
-    ap.add_argument("--bandwidth", type=float, default=6.0, help="EnCodec target bandwidth kbps (for token stats)")
-    ap.add_argument("--center-mode", choices=["middle", "random"], default="random",
-                    help="How to place the gap center")
-    ap.add_argument("--margin-seconds", type=float, default=2.0,
-                    help="Minimum distance of gap boundaries from edges (seconds)")
-    ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--max-len-cap", type=int, default=2048,
-                    help="Cap for recommended max_len/seq_len in token frames (for learned pos embeddings)")
-    ap.add_argument("--prefer-pow2", action="store_true", help="Round recommended seq_len to next power of 2")
-    ap.add_argument("--extra-ctx-s", type=float, default=2.0,
-                    help="Extra context (seconds) to include on both sides in recommended seq_len")
-    args = ap.parse_args()
+    cfg = parse_args()
 
-    outdir = Path(args.outdir)
+    outdir = Path(cfg.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    rng = random.Random(args.seed)
+    rng = random.Random(cfg.seed)
 
-    audio, sr = load_wav_mono(args.wav)
-    audio, sr = resample_if_needed(audio, sr, args.target_sr)
+    audio, sr = load_wav_mono(cfg.wav)
+    audio, sr = resample_if_needed(audio, sr, cfg.target_sr)
     duration_s = len(audio) / sr
 
-    base_name = Path(args.wav).stem
+    base_name = Path(cfg.wav).stem
 
     # Optional: compute token fps once (on the *full* audio)
-    encodec_stats = try_encodec_token_stats(audio, sr, args.bandwidth)
+    encodec_stats = try_encodec_token_stats(audio, sr, cfg.bandwidth)
 
-    num_gaps = args.num_gaps
+    num_gaps = cfg.num_gaps
 
     if num_gaps > 1:
         # --- MULTI-GAP MODE ---
         # Resolve gap durations for each gap
-        if len(args.gap_seconds) == 1:
-            gap_durations = [args.gap_seconds[0]] * num_gaps
-        elif len(args.gap_seconds) == num_gaps:
-            gap_durations = list(args.gap_seconds)
+        if len(cfg.gap_seconds) == 1:
+            gap_durations = [cfg.gap_seconds[0]] * num_gaps
+        elif len(cfg.gap_seconds) == num_gaps:
+            gap_durations = list(cfg.gap_seconds)
         else:
-            ap.error(
+            raise ValueError(
                 f"In multi-gap mode (--num-gaps {num_gaps}), --gap-seconds must "
-                f"have exactly 1 or {num_gaps} values, got {len(args.gap_seconds)}"
+                f"have exactly 1 or {num_gaps} values, got {len(cfg.gap_seconds)}"
             )
 
         # Place all gaps
         gap_positions = choose_multiple_gap_positions(
             duration_s=duration_s,
             gap_durations=gap_durations,
-            center_mode=args.center_mode,
-            margin_s=args.margin_seconds,
-            min_gap_separation_s=args.min_gap_separation_seconds,
+            center_mode=cfg.center_mode,
+            margin_s=cfg.margin_seconds,
+            min_gap_separation_s=cfg.min_gap_separation_seconds,
             rng=rng,
         )
 
@@ -497,20 +582,21 @@ def main():
         sf.write(str(wav_out), gapped, sr)
 
         ann: Dict[str, Any] = {
-            "source_wav": os.path.abspath(args.wav),
+            "source_wav": os.path.abspath(cfg.wav),
+            "config": cfg.config,
             "generated_wav": os.path.abspath(str(wav_out)),
             "sr": int(sr),
             "duration_s": float(duration_s),
             "num_gaps": num_gaps,
-            "min_gap_separation_seconds": float(args.min_gap_separation_seconds),
-            "center_mode": args.center_mode,
-            "margin_seconds": float(args.margin_seconds),
+            "min_gap_separation_seconds": float(cfg.min_gap_separation_seconds),
+            "center_mode": cfg.center_mode,
+            "margin_seconds": float(cfg.margin_seconds),
             "gaps": gaps_info,
             # Backward compat: also include "gap" if single gap
             "recommendations": {
                 "token_based": None,
                 "seconds_based": {
-                    "suggested_context_each_side_s": float(args.extra_ctx_s),
+                    "suggested_context_each_side_s": float(cfg.extra_ctx_s),
                     "notes": (
                         "If EnCodec token stats are unavailable, use seconds-based windowing. "
                         "After encoding, convert seconds to frames using token_fps."
@@ -523,8 +609,8 @@ def main():
         # Backward compat: if single gap, also include old-style "gap" key
         if num_gaps == 1:
             ann["gap"] = gaps_info[0].copy()
-            ann["gap"]["center_mode"] = args.center_mode
-            ann["gap"]["margin_seconds"] = float(args.margin_seconds)
+            ann["gap"]["center_mode"] = cfg.center_mode
+            ann["gap"]["margin_seconds"] = float(cfg.margin_seconds)
 
         # Token-based recommendations
         if encodec_stats is not None and encodec_stats.get("token_fps") is not None:
@@ -532,9 +618,9 @@ def main():
             ann["recommendations"]["token_based"] = recommend_training_lengths_multi(
                 token_fps=token_fps,
                 gap_durations_s=[g["gap_len_s"] for g in gaps_info],
-                max_len_cap=int(args.max_len_cap),
-                prefer_pow2=bool(args.prefer_pow2),
-                extra_ctx_s=float(args.extra_ctx_s),
+                max_len_cap=int(cfg.max_len_cap),
+                prefer_pow2=bool(cfg.prefer_pow2),
+                extra_ctx_s=float(cfg.extra_ctx_s),
             )
 
         with open(ann_out, "w", encoding="utf-8") as f:
@@ -546,14 +632,14 @@ def main():
         # --- SINGLE-GAP MODE (backward compatible) ---
         summary_rows: List[Dict[str, Any]] = []
 
-        for gap_len_s in args.gap_seconds:
+        for gap_len_s in cfg.gap_seconds:
             gap_len_s = float(gap_len_s)
 
             start_s, end_s = choose_gap_start_end(
                 duration_s=duration_s,
                 gap_len_s=gap_len_s,
-                center_mode=args.center_mode,
-                margin_s=args.margin_seconds,
+                center_mode=cfg.center_mode,
+                margin_s=cfg.margin_seconds,
                 rng=rng,
             )
 
@@ -576,27 +662,28 @@ def main():
             }
 
             ann: Dict[str, Any] = {
-                "source_wav": os.path.abspath(args.wav),
+                "source_wav": os.path.abspath(cfg.wav),
+                "config": cfg.config,
                 "generated_wav": os.path.abspath(str(wav_out)),
                 "sr": int(sr),
                 "duration_s": float(duration_s),
                 "num_gaps": 1,
-                "min_gap_separation_seconds": float(args.min_gap_separation_seconds),
-                "center_mode": args.center_mode,
-                "margin_seconds": float(args.margin_seconds),
+                "min_gap_separation_seconds": float(cfg.min_gap_separation_seconds),
+                "center_mode": cfg.center_mode,
+                "margin_seconds": float(cfg.margin_seconds),
                 # New format
                 "gaps": [gap_info],
                 # Old format (backward compat)
                 "gap": {
                     **gap_info,
-                    "center_mode": args.center_mode,
-                    "margin_seconds": float(args.margin_seconds),
+                    "center_mode": cfg.center_mode,
+                    "margin_seconds": float(cfg.margin_seconds),
                 },
                 "recommendations": {
                     "token_based": None,
                     "seconds_based": {
-                        "suggested_context_each_side_s": float(args.extra_ctx_s),
-                        "suggested_total_window_s": float(gap_len_s + 2 * args.extra_ctx_s),
+                        "suggested_context_each_side_s": float(cfg.extra_ctx_s),
+                        "suggested_total_window_s": float(gap_len_s + 2 * cfg.extra_ctx_s),
                         "notes": (
                             "If EnCodec token stats are unavailable, use seconds-based windowing. "
                             "After encoding, convert seconds to frames using token_fps."
@@ -612,9 +699,9 @@ def main():
                 ann["recommendations"]["token_based"] = recommend_training_lengths(
                     token_fps=token_fps,
                     gap_len_s=gap_len_s,
-                    max_len_cap=int(args.max_len_cap),
-                    prefer_pow2=bool(args.prefer_pow2),
-                    extra_ctx_s=float(args.extra_ctx_s),
+                    max_len_cap=int(cfg.max_len_cap),
+                    prefer_pow2=bool(cfg.prefer_pow2),
+                    extra_ctx_s=float(cfg.extra_ctx_s),
                 )
                 # Also add multi-gap fields for consistency
                 ann["recommendations"]["token_based"]["largest_gap_frames"] = \
@@ -641,7 +728,8 @@ def main():
         with open(summary_path, "w", encoding="utf-8") as f:
             json.dump(
                 {
-                    "source_wav": os.path.abspath(args.wav),
+                    "source_wav": os.path.abspath(cfg.wav),
+                    "config": cfg.config,
                     "outdir": os.path.abspath(str(outdir)),
                     "n_samples": len(summary_rows),
                     "encodec_stats_full_audio": encodec_stats,

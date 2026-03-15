@@ -77,6 +77,59 @@ class TrainConfig:
     activity_guided_masking: bool = True
 
 
+def validate_train_config(cfg: TrainConfig):
+    if cfg.seq_len <= 0:
+        raise ValueError("seq_len must be > 0")
+    if cfg.mask_len_min <= 0 or cfg.mask_len_max <= 0:
+        raise ValueError("mask_len_min and mask_len_max must be > 0")
+    if cfg.mask_len_max < cfg.mask_len_min:
+        raise ValueError("mask_len_max must be >= mask_len_min")
+    if cfg.batch_size <= 0:
+        raise ValueError("batch_size must be > 0")
+    if cfg.total_steps <= 0:
+        raise ValueError("total_steps must be > 0")
+    if cfg.warmup_steps < 0:
+        raise ValueError("warmup_steps must be >= 0")
+    if cfg.log_every <= 0:
+        raise ValueError("log_every must be > 0")
+    if cfg.save_every <= 0:
+        raise ValueError("save_every must be > 0")
+    if cfg.test_fill_every < 0:
+        raise ValueError("test_fill_every must be >= 0")
+    if cfg.validation_every < 0:
+        raise ValueError("validation_every must be >= 0")
+    if cfg.validation_examples_per_band <= 0:
+        raise ValueError("validation_examples_per_band must be > 0")
+    if cfg.validation_batch_size is not None and cfg.validation_batch_size <= 0:
+        raise ValueError("validation_batch_size must be > 0 when provided")
+    if cfg.num_workers < 0:
+        raise ValueError("num_workers must be >= 0")
+    if cfg.mask_stride <= 0:
+        raise ValueError("mask_stride must be > 0")
+    if not (0.0 <= cfg.activity_low_quantile <= 1.0):
+        raise ValueError("activity_low_quantile must be in [0, 1]")
+    if not (0.0 <= cfg.activity_high_quantile <= 1.0):
+        raise ValueError("activity_high_quantile must be in [0, 1]")
+    if cfg.activity_low_quantile > cfg.activity_high_quantile:
+        raise ValueError("activity_low_quantile must be <= activity_high_quantile")
+    if cfg.curriculum_schedule not in {"linear", "cosine"}:
+        raise ValueError("curriculum_schedule must be 'linear' or 'cosine'")
+    if (cfg.ctx_left is None) != (cfg.ctx_right is None):
+        raise ValueError("ctx_left and ctx_right must both be set or both be null")
+    if cfg.ctx_left is not None and cfg.ctx_left < 0:
+        raise ValueError("ctx_left must be >= 0")
+    if cfg.ctx_right is not None and cfg.ctx_right < 0:
+        raise ValueError("ctx_right must be >= 0")
+    for name in [
+        "regime_active_prob",
+        "regime_transition_prob",
+        "regime_low_prob",
+        "regime_uniform_prob",
+    ]:
+        if getattr(cfg, name) < 0:
+            raise ValueError(f"{name} must be >= 0")
+
+
 def _parse_simple_yaml_value(raw: str) -> Any:
     text = raw.strip()
     if text == "null":
@@ -324,4 +377,5 @@ def parse_args(argv: Optional[List[str]] = None):
         cfg.run_name = cfg.sample if cfg.sample else "infiller"
 
     cfg._annotation = ann  # type: ignore[attr-defined]
+    validate_train_config(cfg)
     return cfg, args

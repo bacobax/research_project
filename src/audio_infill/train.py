@@ -23,6 +23,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
+from audio_infill.config import validate_train_config as validate_shared_train_config
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -76,9 +78,8 @@ class TrainConfig:
 
     resume: Optional[str] = None
     inpaint_only: bool = False
-    inpaint_output: Optional[str] = None
-
     inpaint_iters: int = 10
+    inpaint_output: Optional[str] = None
 
     ctx_left: Optional[int] = None
     ctx_right: Optional[int] = None
@@ -1834,6 +1835,7 @@ def parse_args(argv: Optional[List[str]] = None):
     # Store annotation for multi-gap loading in Trainer._load_audio
     cfg._annotation = ann  # type: ignore[attr-defined]
 
+    validate_shared_train_config(cfg)
     return cfg, args
 
 

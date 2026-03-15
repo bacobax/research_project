@@ -31,6 +31,9 @@ total_steps: 3000
 log_every: 100
 save_every: 500
 test_fill_every: 0
+validation_every: 0
+validation_examples_per_band: 64
+validation_batch_size: null
 num_workers: 2
 
 output_dir: outputs/runs

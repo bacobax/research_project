@@ -31,6 +31,9 @@ total_steps: 486000
 log_every: 6000
 save_every: 54000
 test_fill_every: 54000
+validation_every: 0
+validation_examples_per_band: 64
+validation_batch_size: null
 num_workers: 2
 
 output_dir: outputs/runs/longestrun
