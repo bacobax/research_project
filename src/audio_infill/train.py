@@ -8,7 +8,7 @@ import argparse
 import json
 import logging
 from collections import defaultdict, deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List
 
@@ -64,6 +64,9 @@ class TrainConfig:
     log_every: int = 100
     save_every: int = 500
     test_fill_every: int = 0
+    validation_every: int = 0
+    validation_examples_per_band: int = 64
+    validation_batch_size: Optional[int] = None
     num_workers: int = 2
 
     output_dir: str = "outputs/runs"
@@ -247,6 +250,206 @@ def compute_mask_candidate_weights(
     return w.astype(np.float32)
 
 
+def window_overlaps_ranges(start: int, seq_len: int, ranges: List[Tuple[int, int]]) -> bool:
+    window_end = start + seq_len
+    for g0, g1 in ranges:
+        if start < g1 and window_end > g0:
+            return True
+    return False
+
+
+def is_non_gap_window(
+    start: int,
+    seq_len: int,
+    gaps: List[Tuple[int, int]],
+    blocked_ranges: Optional[List[Tuple[int, int]]] = None,
+) -> bool:
+    if window_overlaps_ranges(start, seq_len, gaps):
+        return False
+    if blocked_ranges and window_overlaps_ranges(start, seq_len, blocked_ranges):
+        return False
+    return True
+
+
+def merge_ranges(ranges: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+    if not ranges:
+        return []
+    merged: List[Tuple[int, int]] = []
+    for start, end in sorted(ranges):
+        if not merged or start > merged[-1][1]:
+            merged.append((start, end))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    return merged
+
+
+def validation_holdout_summary(ranges: List[Tuple[int, int]]) -> Dict[str, float]:
+    merged = merge_ranges(ranges)
+    return {
+        "holdout_ranges": float(len(merged)),
+        "holdout_frames": float(sum(end - start for start, end in merged)),
+    }
+
+
+def candidate_mask_offsets(seq_len: int, mask_len: int, mask_stride: int) -> np.ndarray:
+    max_m0 = seq_len - mask_len
+    if max_m0 <= 0:
+        return np.array([0], dtype=np.int64)
+    stride = int(max(1, mask_stride))
+    candidates = np.arange(0, max_m0 + 1, stride, dtype=np.int64)
+    if candidates[-1] != max_m0:
+        candidates = np.concatenate([candidates, np.array([max_m0], dtype=np.int64)], axis=0)
+    return candidates
+
+
+def compute_activity_features(
+    wav: torch.Tensor,
+    codes: torch.Tensor,
+    activity_smooth_kernel: int,
+    activity_low_quantile: float,
+    activity_high_quantile: float,
+) -> Dict[str, Any]:
+    frames = int(codes.shape[1])
+    rms = compute_rms_per_frame(wav, frames)
+    token_change = compute_token_change_per_frame(codes)
+    rms_norm = normalize_robust(rms)
+    token_change_norm = normalize_robust(token_change)
+    activity_raw = 0.65 * rms_norm + 0.35 * token_change_norm
+    activity = smooth_1d(activity_raw, activity_smooth_kernel)
+    activity_per_frame = np.clip(activity.astype(np.float32), 0.0, 1.0)
+    return {
+        "rms_per_frame": rms_norm.astype(np.float32),
+        "token_change_per_frame": token_change_norm.astype(np.float32),
+        "activity_per_frame": activity_per_frame,
+        "activity_low_thr": float(np.quantile(activity_per_frame, activity_low_quantile)),
+        "activity_high_thr": float(np.quantile(activity_per_frame, activity_high_quantile)),
+    }
+
+
+@dataclass
+class FixedValidationExample:
+    x: torch.Tensor
+    y: torch.Tensor
+    loss_mask: torch.Tensor
+    band: str
+    sample_name: str
+    mask_mean_activity: float
+    mask_len: int
+    window_start: int
+    mask_start: int
+
+
+class FixedMaskedSpanDataset(Dataset):
+    def __init__(self, examples: List[FixedValidationExample]):
+        self.examples = list(examples)
+        mask_means = np.array([ex.mask_mean_activity for ex in self.examples], dtype=np.float32)
+        mask_lengths = np.array([ex.mask_len for ex in self.examples], dtype=np.float32)
+        self.summary = {
+            "count": len(self.examples),
+            "mean_mask_activity": float(mask_means.mean()) if mask_means.size else 0.0,
+            "mean_mask_len": float(mask_lengths.mean()) if mask_lengths.size else 0.0,
+        }
+
+    def __len__(self) -> int:
+        return len(self.examples)
+
+    def __getitem__(self, idx: int):
+        ex = self.examples[idx]
+        return ex.x.clone(), ex.y.clone(), ex.loss_mask.clone()
+
+
+def build_fixed_validation_examples(
+    codes: torch.Tensor,
+    gaps: List[Tuple[int, int]],
+    seq_len: int,
+    mask_len_range: Tuple[int, int],
+    mask_token: int,
+    activity_per_frame: np.ndarray,
+    activity_low_thr: float,
+    activity_high_thr: float,
+    examples_per_band: int,
+    mask_stride: int,
+    seed: int,
+    sample_name: str,
+) -> Tuple[Dict[str, List[FixedValidationExample]], List[Tuple[int, int]]]:
+    _, frames = codes.shape
+    valid_starts = [s for s in range(max(0, frames - seq_len)) if is_non_gap_window(s, seq_len, gaps)]
+    if not valid_starts:
+        raise ValueError(f"No valid validation windows found for sample={sample_name}")
+
+    activity_cumsum = _build_cumsum(activity_per_frame)
+    rng = random.Random(seed)
+    mask_min, mask_max = mask_len_range
+    per_band: Dict[str, List[FixedValidationExample]] = {
+        "high_activity": [],
+        "low_activity": [],
+    }
+    reserved_ranges: List[Tuple[int, int]] = []
+    seen: Dict[str, set] = {
+        "high_activity": set(),
+        "low_activity": set(),
+    }
+    max_attempts = max(2000, examples_per_band * 400)
+
+    for band in ["high_activity", "low_activity"]:
+        attempts = 0
+        while len(per_band[band]) < examples_per_band and attempts < max_attempts:
+            attempts += 1
+            start = rng.choice(valid_starts)
+            mask_len = min(seq_len, rng.randint(mask_min, max(mask_min, mask_max)))
+            offsets = candidate_mask_offsets(seq_len, mask_len, mask_stride)
+            mask_start = int(rng.choice(offsets.tolist()))
+            g0 = start + mask_start
+            g1 = g0 + mask_len
+            mask_mean = float(span_mean_from_cumsum(activity_cumsum, np.array([g0]), np.array([g1]))[0])
+
+            if band == "high_activity" and mask_mean < activity_high_thr:
+                continue
+            if band == "low_activity" and mask_mean > activity_low_thr:
+                continue
+
+            key = (start, mask_start, mask_len)
+            if key in seen[band]:
+                continue
+            seen[band].add(key)
+            reserved_ranges.append((start, start + seq_len))
+
+            y = codes[:, start : start + seq_len].clone()
+            x = y.clone()
+            x[:, mask_start : mask_start + mask_len] = mask_token
+            loss_mask = torch.zeros(seq_len, dtype=torch.bool)
+            loss_mask[mask_start : mask_start + mask_len] = True
+            per_band[band].append(
+                FixedValidationExample(
+                    x=x,
+                    y=y,
+                    loss_mask=loss_mask,
+                    band=band,
+                    sample_name=sample_name,
+                    mask_mean_activity=mask_mean,
+                    mask_len=mask_len,
+                    window_start=start,
+                    mask_start=mask_start,
+                )
+            )
+
+        if len(per_band[band]) == 0:
+            raise ValueError(
+                f"No validation examples found for band={band} sample={sample_name}. "
+                "Adjust validation settings or activity thresholds."
+            )
+        if len(per_band[band]) < examples_per_band:
+            logger.warning(
+                "Validation band %s for sample %s requested %d examples but found %d",
+                band,
+                sample_name,
+                examples_per_band,
+                len(per_band[band]),
+            )
+
+    return per_band, merge_ranges(reserved_ranges)
+
+
 class AudioEncoder:
     def __init__(self, bandwidth: float, device: torch.device):
         from encodec import EncodecModel
@@ -292,12 +495,14 @@ class ActivityAwareMaskedSpanDataset(Dataset):
         dead_window_min_ratio: float = 0.03,
         regime_probs: Optional[Dict[str, float]] = None,
         max_resample_tries: int = 12,
+        blocked_ranges: Optional[List[Tuple[int, int]]] = None,
         mask_stride: int = 1,
         activity_guided_masking: bool = True,
     ):
         self.codes = codes
         self.K, self.F = codes.shape
         self.gaps = sorted(gaps, key=lambda g: g[0])
+        self.blocked_ranges = merge_ranges(blocked_ranges or [])
         self.seq_len = seq_len
         self._mask_len_range = list(mask_len_range)
         self.mask_token = mask_token
@@ -356,11 +561,7 @@ class ActivityAwareMaskedSpanDataset(Dataset):
         self._build_valid_starts_and_weights()
 
     def _is_non_gap_window(self, s: int) -> bool:
-        window_end = s + self.seq_len
-        for g0, g1 in self.gaps:
-            if s < g1 and window_end > g0:
-                return False
-        return True
+        return is_non_gap_window(s, self.seq_len, self.gaps, self.blocked_ranges)
 
     def _build_valid_starts_and_weights(self):
         self.starts: List[int] = []
@@ -401,6 +602,7 @@ class ActivityAwareMaskedSpanDataset(Dataset):
             "total_valid_starts": int(non_gap_candidates),
             "starts_after_filter": len(self.starts),
             "rejected_dead": int(rejected_dead),
+            "blocked_ranges": int(len(self.blocked_ranges)),
             "avg_window_activity": float(self.window_mean.mean()) if self.window_mean.size else 0.0,
             "min_window_weight": float(self.window_weights.min()) if self.window_weights.size else 0.0,
             "max_window_weight": float(self.window_weights.max()) if self.window_weights.size else 0.0,
@@ -467,9 +669,7 @@ class ActivityAwareMaskedSpanDataset(Dataset):
                 "mask_regime": 3,
             }
 
-        candidates = np.arange(0, max_m0 + 1, self.mask_stride, dtype=np.int64)
-        if candidates[-1] != max_m0:
-            candidates = np.concatenate([candidates, np.array([max_m0], dtype=np.int64)], axis=0)
+        candidates = candidate_mask_offsets(self.seq_len, mask_len, self.mask_stride)
 
         if not self.activity_guided_masking:
             m0 = int(random.choice(candidates.tolist()))
@@ -619,12 +819,14 @@ class Trainer:
 
         self._log_hparams()
         self._load_audio()
+        self._build_validation()
         self._build_dataset()
         self._build_model()
         self._build_optimizer()
 
         self.global_step = 0
         self.best_loss = float("inf")
+        self.best_val_loss = float("inf")
 
         # Curriculum state
         if cfg.curriculum:
@@ -632,12 +834,16 @@ class Trainer:
 
     def _log_hparams(self):
         cfg = self.cfg
-        hparams = {k: v for k, v in vars(cfg).items() if not k.startswith("_") and isinstance(v, (int, float, str, bool))}
+        hparams = {
+            k: v
+            for k, v in vars(cfg).items()
+            if not k.startswith("_") and isinstance(v, (int, float, str, bool, list, tuple))
+        }
         hparams_safe = {}
         for k, v in hparams.items():
             if v is None:
                 continue
-            hparams_safe[k] = v
+            hparams_safe[k] = json.dumps(v) if isinstance(v, (list, tuple)) else v
         logger.info("=== Hyperparameters ===")
         for k, v in sorted(hparams_safe.items()):
             logger.info("  %-20s = %s", k, v)
@@ -649,80 +855,112 @@ class Trainer:
             run_name=".",
         )
 
-    def _load_audio(self):
+    def _resolve_gap_frames(
+        self,
+        frames: int,
+        duration_s: float,
+        gap_start_s: float,
+        gap_end_s: float,
+        ann: Optional[dict],
+    ) -> List[Tuple[int, int]]:
+        fps = frames / max(duration_s, 1e-9)
+        gaps_f: List[Tuple[int, int]] = []
+        if ann is not None:
+            if "gaps" in ann:
+                for gap in ann["gaps"]:
+                    g0 = max(0, min(frames, int(round(gap["gap_start_s"] * fps))))
+                    g1 = max(0, min(frames, int(round(gap["gap_end_s"] * fps))))
+                    gaps_f.append((g0, g1))
+            elif "gap" in ann:
+                gap = ann["gap"]
+                g0 = max(0, min(frames, int(round(gap["gap_start_s"] * fps))))
+                g1 = max(0, min(frames, int(round(gap["gap_end_s"] * fps))))
+                gaps_f.append((g0, g1))
+        else:
+            g0 = max(0, min(frames, int(round(gap_start_s * fps))))
+            g1 = max(0, min(frames, int(round(gap_end_s * fps))))
+            gaps_f.append((g0, g1))
+        return gaps_f
+
+    def _load_audio_sample(
+        self,
+        wav_path: str,
+        target_sr: int,
+        gap_start_s: float,
+        gap_end_s: float,
+        ann: Optional[dict] = None,
+    ) -> Dict[str, Any]:
         import soundfile as sf
         import librosa
 
-        cfg = self.cfg
-        logger.info("Loading audio: %s", cfg.wav_path)
+        logger.info("Loading audio: %s", wav_path)
 
-        audio, sr = sf.read(cfg.wav_path, always_2d=True)
+        audio, sr = sf.read(wav_path, always_2d=True)
         audio = audio.astype(np.float32).mean(axis=1)
-        if sr != cfg.target_sr:
-            audio = librosa.resample(audio, orig_sr=sr, target_sr=cfg.target_sr)
+        if sr != target_sr:
+            audio = librosa.resample(audio, orig_sr=sr, target_sr=target_sr)
         wav = torch.from_numpy(audio).unsqueeze(0)
         wav = wav / (wav.abs().max() + 1e-9)
 
-        self.wav = wav
-        self.duration_s = wav.shape[-1] / cfg.target_sr
-        logger.info("Audio: %.1fs @ %dHz, samples=%d", self.duration_s, cfg.target_sr, wav.shape[-1])
+        duration_s = wav.shape[-1] / target_sr
+        logger.info("Audio: %.1fs @ %dHz, samples=%d", duration_s, target_sr, wav.shape[-1])
 
-        self.encoder = AudioEncoder(cfg.bandwidth, self.device)
-        self.codes, self.scale = self.encoder.encode(wav)
-        self.K, self.frames = self.codes.shape
-        self.bins = self.encoder.bins
-        self.mask_token = self.encoder.mask_token
-
-        rms = compute_rms_per_frame(wav, self.frames)
-        token_change = compute_token_change_per_frame(self.codes)
-        rms_norm = normalize_robust(rms)
-        token_change_norm = normalize_robust(token_change)
-        activity_raw = 0.65 * rms_norm + 0.35 * token_change_norm
-        activity = smooth_1d(activity_raw, self.cfg.activity_smooth_kernel)
-
-        self.rms_per_frame = rms_norm.astype(np.float32)
-        self.token_change_per_frame = token_change_norm.astype(np.float32)
-        self.activity_per_frame = np.clip(activity.astype(np.float32), 0.0, 1.0)
-
-        self.activity_low_thr = float(np.quantile(self.activity_per_frame, self.cfg.activity_low_quantile))
-        self.activity_high_thr = float(np.quantile(self.activity_per_frame, self.cfg.activity_high_quantile))
-        self.activity_cumsum = _build_cumsum(self.activity_per_frame)
-        self.activity_active_cumsum = _build_cumsum((self.activity_per_frame > self.activity_low_thr).astype(np.float32))
-
-        fps = self.frames / self.duration_s
-
-        # --- Multi-gap support ---
-        # gaps_f: list of (g0, g1) frame intervals for real gaps
-        self.gaps_f: List[Tuple[int, int]] = []
-
-        if hasattr(cfg, '_annotation') and cfg._annotation is not None:
-            ann = cfg._annotation
-            if "gaps" in ann:
-                # New multi-gap format
-                for g in ann["gaps"]:
-                    g0 = max(0, min(self.frames, int(round(g["gap_start_s"] * fps))))
-                    g1 = max(0, min(self.frames, int(round(g["gap_end_s"] * fps))))
-                    self.gaps_f.append((g0, g1))
-                logger.info("Loaded %d gaps from annotation (new format):", len(self.gaps_f))
-            elif "gap" in ann:
-                # Old single-gap format
-                g = ann["gap"]
-                g0 = max(0, min(self.frames, int(round(g["gap_start_s"] * fps))))
-                g1 = max(0, min(self.frames, int(round(g["gap_end_s"] * fps))))
-                self.gaps_f.append((g0, g1))
-                logger.info("Loaded 1 gap from annotation (old format):")
-        else:
-            # Fallback: use gap_start_s/gap_end_s from config
-            g0 = max(0, min(self.frames, int(round(cfg.gap_start_s * fps))))
-            g1 = max(0, min(self.frames, int(round(cfg.gap_end_s * fps))))
-            self.gaps_f.append((g0, g1))
-            logger.info("Loaded 1 gap from config (gap_start_s/gap_end_s):")
-
-        # Log all gap frame ranges
-        for i, (g0, g1) in enumerate(self.gaps_f):
+        codes, scale = self.encoder.encode(wav)
+        features = compute_activity_features(
+            wav=wav,
+            codes=codes,
+            activity_smooth_kernel=self.cfg.activity_smooth_kernel,
+            activity_low_quantile=self.cfg.activity_low_quantile,
+            activity_high_quantile=self.cfg.activity_high_quantile,
+        )
+        gaps_f = self._resolve_gap_frames(
+            frames=int(codes.shape[1]),
+            duration_s=duration_s,
+            gap_start_s=gap_start_s,
+            gap_end_s=gap_end_s,
+            ann=ann,
+        )
+        fps = codes.shape[1] / max(duration_s, 1e-9)
+        for i, (g0, g1) in enumerate(gaps_f):
             gap_dur = (g1 - g0) / fps
             logger.info("  Gap %d: frames [%d, %d) = %.2fs", i, g0, g1, gap_dur)
 
+        return {
+            "wav": wav,
+            "duration_s": duration_s,
+            "codes": codes,
+            "scale": scale,
+            "frames": int(codes.shape[1]),
+            "gaps_f": gaps_f,
+            **features,
+        }
+
+    def _load_audio(self):
+        cfg = self.cfg
+        self.encoder = AudioEncoder(cfg.bandwidth, self.device)
+        sample_data = self._load_audio_sample(
+            wav_path=cfg.wav_path,
+            target_sr=cfg.target_sr,
+            gap_start_s=cfg.gap_start_s,
+            gap_end_s=cfg.gap_end_s,
+            ann=getattr(cfg, "_annotation", None),
+        )
+
+        self.wav = sample_data["wav"]
+        self.duration_s = sample_data["duration_s"]
+        self.codes = sample_data["codes"]
+        self.scale = sample_data["scale"]
+        self.K, self.frames = self.codes.shape
+        self.bins = self.encoder.bins
+        self.mask_token = self.encoder.mask_token
+        self.gaps_f = sample_data["gaps_f"]
+        self.rms_per_frame = sample_data["rms_per_frame"]
+        self.token_change_per_frame = sample_data["token_change_per_frame"]
+        self.activity_per_frame = sample_data["activity_per_frame"]
+        self.activity_low_thr = sample_data["activity_low_thr"]
+        self.activity_high_thr = sample_data["activity_high_thr"]
+        self.activity_cumsum = _build_cumsum(self.activity_per_frame)
+        self.activity_active_cumsum = _build_cumsum((self.activity_per_frame > self.activity_low_thr).astype(np.float32))
         self.largest_gap_frames = max(g1 - g0 for g0, g1 in self.gaps_f)
         logger.info(
             "Codes: K=%d, F=%d, bins=%d, largest_gap_frames=%d",
@@ -761,6 +999,7 @@ class Trainer:
                 "low_activity": cfg.regime_low_prob,
                 "uniform": cfg.regime_uniform_prob,
             },
+            blocked_ranges=getattr(self, "validation_holdout_ranges", []),
             mask_stride=cfg.mask_stride,
             activity_guided_masking=cfg.activity_guided_masking,
         )
@@ -779,6 +1018,48 @@ class Trainer:
                     self.writer.add_scalar(f"dataset/{key}", float(value), 0)
         self.writer.add_scalar("train/activity_low_thr", self.activity_low_thr, 0)
         self.writer.add_scalar("train/activity_high_thr", self.activity_high_thr, 0)
+
+    def _build_validation(self):
+        cfg = self.cfg
+        self.validation_dataloaders: Dict[str, DataLoader] = {}
+        self.validation_holdout_ranges: List[Tuple[int, int]] = []
+        self.validation_enabled = cfg.validation_every > 0
+        if not self.validation_enabled:
+            return
+
+        val_batch_size = cfg.validation_batch_size or cfg.batch_size
+        sample_examples, self.validation_holdout_ranges = build_fixed_validation_examples(
+            codes=self.codes,
+            gaps=self.gaps_f,
+            seq_len=cfg.seq_len,
+            mask_len_range=(cfg.mask_len_min, cfg.mask_len_max),
+            mask_token=self.mask_token,
+            activity_per_frame=self.activity_per_frame,
+            activity_low_thr=self.activity_low_thr,
+            activity_high_thr=self.activity_high_thr,
+            examples_per_band=cfg.validation_examples_per_band,
+            mask_stride=cfg.mask_stride,
+            seed=cfg.seed + 1009,
+            sample_name=cfg.sample or Path(cfg.wav_path).stem,
+        )
+
+        holdout_summary = validation_holdout_summary(self.validation_holdout_ranges)
+        for key, value in holdout_summary.items():
+            self.writer.add_scalar(f"validation/{key}", float(value), 0)
+
+        for band, items in sample_examples.items():
+            dataset = FixedMaskedSpanDataset(items)
+            self.validation_dataloaders[band] = DataLoader(
+                dataset,
+                batch_size=val_batch_size,
+                shuffle=False,
+                num_workers=0,
+                pin_memory=(self.device.type == "cuda"),
+                drop_last=False,
+            )
+            logger.info("Validation %s summary: %s", band, dataset.summary)
+            for key, value in dataset.summary.items():
+                self.writer.add_scalar(f"validation/{band}_{key}", float(value), 0)
 
     def _build_model(self):
         cfg = self.cfg
@@ -877,6 +1158,97 @@ class Trainer:
         mask_btk = mask_bt.repeat_interleave(K)
         return F.cross_entropy(logits_flat[mask_btk], y_flat[mask_btk])
 
+    def _compute_masked_metrics(
+        self,
+        logits: torch.Tensor,
+        y: torch.Tensor,
+        loss_mask: torch.Tensor,
+    ) -> Dict[str, float]:
+        B, K, T, _ = logits.shape
+        if loss_mask.dim() == 1:
+            lm = loss_mask.unsqueeze(0).expand(B, -1)
+        else:
+            lm = loss_mask
+        mask_exp = lm.unsqueeze(1).expand(B, K, T)
+
+        preds = logits.argmax(dim=-1)
+        n_masked = int(mask_exp.sum().item())
+        if n_masked > 0:
+            acc_top1 = float((preds[mask_exp] == y[mask_exp]).float().mean().item())
+            top5 = logits.topk(5, dim=-1).indices
+            hits5 = (top5 == y.unsqueeze(-1)).any(dim=-1)
+            acc_top5 = float(hits5[mask_exp].float().mean().item())
+        else:
+            acc_top1 = 0.0
+            acc_top5 = 0.0
+        return {
+            "acc_top1": acc_top1,
+            "acc_top5": acc_top5,
+            "masked_tokens": float(n_masked),
+        }
+
+    def run_validation(self, step: int) -> Optional[Dict[str, float]]:
+        if not getattr(self, "validation_enabled", False):
+            return None
+
+        self.model.eval()
+        use_amp = self.device.type == "cuda"
+        band_results: Dict[str, Dict[str, float]] = {}
+        with torch.no_grad():
+            for band, loader in self.validation_dataloaders.items():
+                total_loss = 0.0
+                total_acc1 = 0.0
+                total_acc5 = 0.0
+                count = 0
+                for x, y, loss_mask in loader:
+                    x = x.to(self.device, non_blocking=True)
+                    y = y.to(self.device, non_blocking=True)
+                    loss_mask = loss_mask.to(self.device, non_blocking=True).bool()
+                    with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=use_amp):
+                        logits = self.model(x)
+                        loss = self._compute_loss(logits, y, loss_mask)
+                    metrics = self._compute_masked_metrics(logits, y, loss_mask)
+                    batch_size = int(x.shape[0])
+                    total_loss += float(loss.item()) * batch_size
+                    total_acc1 += metrics["acc_top1"] * batch_size
+                    total_acc5 += metrics["acc_top5"] * batch_size
+                    count += batch_size
+
+                avg_loss = total_loss / max(1, count)
+                avg_acc1 = total_acc1 / max(1, count)
+                avg_acc5 = total_acc5 / max(1, count)
+                avg_ppl = math.exp(min(avg_loss, 20.0))
+                band_results[band] = {
+                    "loss": avg_loss,
+                    "nll": avg_loss,
+                    "ppl": avg_ppl,
+                    "acc_top1": avg_acc1,
+                    "acc_top5": avg_acc5,
+                }
+                prefix = "val/high" if band == "high_activity" else "val/low"
+                self.writer.add_scalar(f"{prefix}_loss", avg_loss, step)
+                self.writer.add_scalar(f"{prefix}_nll", avg_loss, step)
+                self.writer.add_scalar(f"{prefix}_ppl", avg_ppl, step)
+                self.writer.add_scalar(f"{prefix}_acc_top1", avg_acc1, step)
+                self.writer.add_scalar(f"{prefix}_acc_top5", avg_acc5, step)
+
+        combined_loss = float(
+            np.mean([band_results["high_activity"]["loss"], band_results["low_activity"]["loss"]])
+        )
+        self.writer.add_scalar("val/combined_loss", combined_loss, step)
+        self.model.train()
+
+        if combined_loss < self.best_val_loss:
+            self.best_val_loss = combined_loss
+            self.save_checkpoint("best_val")
+
+        result = {
+            "combined_loss": combined_loss,
+            "high_loss": band_results["high_activity"]["loss"],
+            "low_loss": band_results["low_activity"]["loss"],
+        }
+        return result
+
     def save_checkpoint(self, tag: str = "latest"):
         path = self.cfg.checkpoint_dir / f"{tag}.pt"
         rng_state = {
@@ -893,6 +1265,7 @@ class Trainer:
                 "optimizer": self.optimizer.state_dict(),
                 "scaler": self.scaler.state_dict(),
                 "best_loss": self.best_loss,
+                "best_val_loss": self.best_val_loss,
                 "config": vars(self.cfg),
                 "rng_state": rng_state,
             },
@@ -907,6 +1280,7 @@ class Trainer:
         self.scaler.load_state_dict(ckpt["scaler"])
         self.global_step = ckpt["step"]
         self.best_loss = ckpt.get("best_loss", float("inf"))
+        self.best_val_loss = ckpt.get("best_val_loss", float("inf"))
         if "rng_state" in ckpt:
             rng = ckpt["rng_state"]
             random.setstate(rng["python"])
@@ -976,23 +1350,9 @@ class Trainer:
             self.scaler.update()
 
             with torch.no_grad():
-                B, K, T, V = logits.shape
-                if loss_mask.dim() == 1:
-                    lm = loss_mask.unsqueeze(0).expand(B, -1)
-                else:
-                    lm = loss_mask
-                mask_exp = lm.unsqueeze(1).expand(B, K, T)
-
-                preds = logits.argmax(dim=-1)
-                n_masked = mask_exp.sum().item()
-                if n_masked > 0:
-                    correct = (preds[mask_exp] == y[mask_exp]).float().mean().item()
-                    top5 = logits.topk(5, dim=-1).indices
-                    hits5 = (top5 == y.unsqueeze(-1)).any(dim=-1)
-                    acc5 = hits5[mask_exp].float().mean().item()
-                else:
-                    correct = 0.0
-                    acc5 = 0.0
+                train_metrics = self._compute_masked_metrics(logits, y, loss_mask)
+                correct = train_metrics["acc_top1"]
+                acc5 = train_metrics["acc_top5"]
 
             loss_val = loss.item()
             nll = loss_val
@@ -1081,6 +1441,9 @@ class Trainer:
             if step % cfg.save_every == 0:
                 self.save_checkpoint("latest")
                 self.save_checkpoint(f"step_{step}")
+
+            if self.validation_enabled and cfg.validation_every > 0 and step % cfg.validation_every == 0:
+                self.run_validation(step)
 
             if cfg.test_fill_every > 0 and step % cfg.test_fill_every == 0:
                 logger.info("Running test inpaint (all gaps) at step %d", step)
@@ -1326,6 +1689,9 @@ def parse_args(argv: Optional[List[str]] = None):
     parser.add_argument("--log-every", type=int, default=None)
     parser.add_argument("--save-every", type=int, default=None)
     parser.add_argument("--test-fill-every", type=int, default=None, help="Run inpaint + log spectrogram every N steps (0=disabled)")
+    parser.add_argument("--validation-every", type=int, default=None, help="Run dual-band validation on held-out windows from the training sample every N steps (0=disabled)")
+    parser.add_argument("--validation-examples-per-band", type=int, default=None, help="Fixed same-sample validation examples per activity band")
+    parser.add_argument("--validation-batch-size", type=int, default=None, help="Validation batch size (default: batch-size)")
     parser.add_argument("--num-workers", type=int, default=None)
 
     parser.add_argument("--output-dir", type=str, default=None)
@@ -1402,6 +1768,9 @@ def parse_args(argv: Optional[List[str]] = None):
         "log_every": args.log_every,
         "save_every": args.save_every,
         "test_fill_every": args.test_fill_every,
+        "validation_every": args.validation_every,
+        "validation_examples_per_band": args.validation_examples_per_band,
+        "validation_batch_size": args.validation_batch_size,
         "num_workers": args.num_workers,
         "output_dir": args.output_dir,
         "run_name": args.run_name,

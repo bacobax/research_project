@@ -39,6 +39,9 @@ class TrainConfig:
     log_every: int = 100
     save_every: int = 500
     test_fill_every: int = 0
+    validation_every: int = 0
+    validation_examples_per_band: int = 64
+    validation_batch_size: Optional[int] = None
     num_workers: int = 2
 
     output_dir: str = "outputs/runs"
@@ -192,6 +195,9 @@ def parse_args(argv: Optional[List[str]] = None):
     parser.add_argument("--log-every", type=int, default=None)
     parser.add_argument("--save-every", type=int, default=None)
     parser.add_argument("--test-fill-every", type=int, default=None)
+    parser.add_argument("--validation-every", type=int, default=None)
+    parser.add_argument("--validation-examples-per-band", type=int, default=None)
+    parser.add_argument("--validation-batch-size", type=int, default=None)
     parser.add_argument("--num-workers", type=int, default=None)
 
     parser.add_argument("--output-dir", type=str, default=None)
@@ -265,6 +271,9 @@ def parse_args(argv: Optional[List[str]] = None):
         "log_every": args.log_every,
         "save_every": args.save_every,
         "test_fill_every": args.test_fill_every,
+        "validation_every": args.validation_every,
+        "validation_examples_per_band": args.validation_examples_per_band,
+        "validation_batch_size": args.validation_batch_size,
         "num_workers": args.num_workers,
         "output_dir": args.output_dir,
         "run_name": args.run_name,
