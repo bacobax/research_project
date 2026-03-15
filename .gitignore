@@ -40,3 +40,6 @@ events.out.tfevents.*
 
 # Local caches
 .cache/
+
+
+data
