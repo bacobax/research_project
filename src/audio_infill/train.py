@@ -10,7 +10,7 @@ import logging
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, List
+from typing import Any, Dict, Optional, Tuple, List, Sequence
 
 import numpy as np
 import torch
@@ -103,6 +103,21 @@ class TrainConfig:
     regime_uniform_prob: float = 0.10
     mask_stride: int = 1
     activity_guided_masking: bool = True
+
+    decoded_loss_enabled: bool = False
+    decoded_loss_weight: float = 0.0
+    decoded_loss_start_step: int = 0
+    decoded_loss_every: int = 1
+    decoded_loss_max_items: int = 1
+    decoded_loss_margin_frames: int = 8
+    decoded_loss_temperature: float = 1.0
+    decoded_loss_waveform_l1_weight: float = 0.0
+    decoded_loss_stft_weight: float = 1.0
+    decoded_loss_spectral_convergence_weight: float = 1.0
+    decoded_loss_log_magnitude_weight: float = 1.0
+    decoded_loss_n_ffts: Tuple[int, ...] = (512, 1024, 2048)
+    decoded_loss_hop_lengths: Tuple[int, ...] = (128, 256, 512)
+    decoded_loss_win_lengths: Tuple[int, ...] = (512, 1024, 2048)
 
     @property
     def checkpoint_dir(self) -> Path:
@@ -458,8 +473,10 @@ class AudioEncoder:
         self.device = device
         self.model = EncodecModel.encodec_model_24khz().to(device).eval()
         self.model.set_target_bandwidth(bandwidth)
+        self.model.requires_grad_(False)
         self.bins = int(self.model.quantizer.bins)
         self.mask_token = self.bins
+        self.frame_rate = int(self.model.frame_rate)
 
     @torch.no_grad()
     def encode(self, wav: torch.Tensor) -> Tuple[torch.Tensor, object]:
@@ -474,6 +491,61 @@ class AudioEncoder:
         codes_b = codes.unsqueeze(0).to(self.device)
         wav_out = self.model.decode([(codes_b, scale)])
         return wav_out.squeeze(0).cpu().squeeze(0).numpy()
+
+    def codes_to_embeddings(self, codes: torch.Tensor) -> torch.Tensor:
+        if codes.dim() == 2:
+            codes = codes.unsqueeze(0)
+        if codes.dim() != 3:
+            raise ValueError(f"codes_to_embeddings expects [B,K,T] or [K,T], got shape={tuple(codes.shape)}")
+        codes = codes.to(self.device, dtype=torch.long)
+        quantized_out = None
+        layers = self.model.quantizer.vq.layers
+        if codes.shape[1] > len(layers):
+            raise ValueError(f"codes K={codes.shape[1]} exceeds quantizer layers={len(layers)}")
+        for q in range(codes.shape[1]):
+            quantized = layers[q].decode(codes[:, q, :])
+            quantized_out = quantized if quantized_out is None else quantized_out + quantized
+        assert quantized_out is not None
+        return quantized_out
+
+    def logits_to_embeddings(self, logits: torch.Tensor, temperature: float = 1.0) -> torch.Tensor:
+        if logits.dim() != 4:
+            raise ValueError(f"logits_to_embeddings expects [B,K,T,V], got shape={tuple(logits.shape)}")
+        if temperature <= 0:
+            raise ValueError("temperature must be > 0")
+        logits = logits.to(self.device, dtype=torch.float32)
+        probs = torch.softmax(logits / temperature, dim=-1)
+        quantized_out = None
+        layers = self.model.quantizer.vq.layers
+        if logits.shape[1] > len(layers):
+            raise ValueError(f"logits K={logits.shape[1]} exceeds quantizer layers={len(layers)}")
+        for q in range(logits.shape[1]):
+            layer = layers[q]
+            codebook = layer.codebook.to(device=logits.device, dtype=logits.dtype)
+            soft_quantized = torch.matmul(probs[:, q, :, :], codebook)
+            soft_quantized = layer.project_out(soft_quantized)
+            soft_quantized = soft_quantized.transpose(1, 2)
+            quantized_out = soft_quantized if quantized_out is None else quantized_out + soft_quantized
+        assert quantized_out is not None
+        return quantized_out
+
+    def decode_embeddings(self, embeddings: torch.Tensor, scale: Optional[torch.Tensor] = None) -> torch.Tensor:
+        if embeddings.dim() != 3:
+            raise ValueError(f"decode_embeddings expects [B,D,T], got shape={tuple(embeddings.shape)}")
+        embeddings = embeddings.to(self.device, dtype=torch.float32)
+        decoder = self.model.decoder
+        decoder_was_training = decoder.training
+        if torch.is_grad_enabled():
+            # cuDNN LSTM backward requires the decoder forward to run in training mode,
+            # even though the EnCodec weights themselves stay frozen.
+            decoder.train(True)
+        try:
+            wav_out = decoder(embeddings)
+        finally:
+            decoder.train(decoder_was_training)
+        if scale is not None:
+            wav_out = wav_out * scale.view(-1, 1, 1)
+        return wav_out
 
 
 class ActivityAwareMaskedSpanDataset(Dataset):
@@ -806,6 +878,72 @@ class JointCodebookInfiller(nn.Module):
         return logits
 
 
+class MultiResolutionSTFTLoss(nn.Module):
+    def __init__(
+        self,
+        n_ffts: Sequence[int],
+        hop_lengths: Sequence[int],
+        win_lengths: Sequence[int],
+        spectral_convergence_weight: float = 1.0,
+        log_magnitude_weight: float = 1.0,
+        eps: float = 1e-7,
+    ):
+        super().__init__()
+        if not (len(n_ffts) == len(hop_lengths) == len(win_lengths)):
+            raise ValueError("STFT parameter lists must have the same length")
+        if len(n_ffts) == 0:
+            raise ValueError("STFT parameter lists must be non-empty")
+        self.n_ffts = tuple(int(v) for v in n_ffts)
+        self.hop_lengths = tuple(int(v) for v in hop_lengths)
+        self.win_lengths = tuple(int(v) for v in win_lengths)
+        self.spectral_convergence_weight = float(spectral_convergence_weight)
+        self.log_magnitude_weight = float(log_magnitude_weight)
+        self.eps = float(eps)
+
+    def _stft_mag(self, audio: torch.Tensor, n_fft: int, hop_length: int, win_length: int) -> torch.Tensor:
+        window = torch.hann_window(win_length, device=audio.device, dtype=audio.dtype)
+        spec = torch.stft(
+            audio,
+            n_fft=n_fft,
+            hop_length=hop_length,
+            win_length=win_length,
+            window=window,
+            return_complex=True,
+        )
+        return spec.abs().clamp_min(self.eps)
+
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> Dict[str, torch.Tensor]:
+        if pred.shape != target.shape:
+            raise ValueError(f"pred/target shape mismatch: {tuple(pred.shape)} vs {tuple(target.shape)}")
+        if pred.dim() != 2:
+            raise ValueError(f"MultiResolutionSTFTLoss expects [B,T], got shape={tuple(pred.shape)}")
+        total_sc = pred.new_zeros(())
+        total_log_mag = pred.new_zeros(())
+        for n_fft, hop_length, win_length in zip(self.n_ffts, self.hop_lengths, self.win_lengths):
+            pred_mag = self._stft_mag(pred, n_fft, hop_length, win_length)
+            target_mag = self._stft_mag(target, n_fft, hop_length, win_length)
+            diff = pred_mag - target_mag
+            sc_num = torch.linalg.vector_norm(diff.reshape(diff.shape[0], -1), dim=1)
+            sc_den = torch.linalg.vector_norm(target_mag.reshape(target_mag.shape[0], -1), dim=1).clamp_min(self.eps)
+            spectral_convergence = (sc_num / sc_den).mean()
+            log_magnitude = F.l1_loss(torch.log(pred_mag), torch.log(target_mag))
+            total_sc = total_sc + spectral_convergence
+            total_log_mag = total_log_mag + log_magnitude
+
+        n_res = float(len(self.n_ffts))
+        total_sc = total_sc / n_res
+        total_log_mag = total_log_mag / n_res
+        total = (
+            self.spectral_convergence_weight * total_sc
+            + self.log_magnitude_weight * total_log_mag
+        )
+        return {
+            "total": total,
+            "spectral_convergence": total_sc,
+            "log_magnitude": total_log_mag,
+        }
+
+
 class Trainer:
     def __init__(self, cfg: TrainConfig):
         self.cfg = cfg
@@ -824,6 +962,7 @@ class Trainer:
         self._build_dataset()
         self._build_model()
         self._build_optimizer()
+        self._build_decoded_loss()
 
         self.global_step = 0
         self.best_loss = float("inf")
@@ -1088,6 +1227,33 @@ class Trainer:
         )
         self.scaler = torch.amp.GradScaler(enabled=(self.device.type == "cuda"))
 
+    def _build_decoded_loss(self):
+        cfg = self.cfg
+        self.decoded_loss_enabled = bool(cfg.decoded_loss_enabled and cfg.decoded_loss_weight > 0)
+        self.decoded_stft_loss: Optional[MultiResolutionSTFTLoss] = None
+        if not self.decoded_loss_enabled:
+            return
+        if getattr(self.encoder.model, "normalize", False):
+            raise NotImplementedError(
+                "decoded-domain loss currently assumes normalize=False for the EnCodec decoder path"
+            )
+        self.decoded_stft_loss = MultiResolutionSTFTLoss(
+            n_ffts=cfg.decoded_loss_n_ffts,
+            hop_lengths=cfg.decoded_loss_hop_lengths,
+            win_lengths=cfg.decoded_loss_win_lengths,
+            spectral_convergence_weight=cfg.decoded_loss_spectral_convergence_weight,
+            log_magnitude_weight=cfg.decoded_loss_log_magnitude_weight,
+        )
+        logger.info(
+            "Decoded-domain loss enabled: weight=%.4f every=%d start=%d max_items=%d margin_frames=%d temperature=%.3f",
+            cfg.decoded_loss_weight,
+            cfg.decoded_loss_every,
+            cfg.decoded_loss_start_step,
+            cfg.decoded_loss_max_items,
+            cfg.decoded_loss_margin_frames,
+            cfg.decoded_loss_temperature,
+        )
+
     # --- Curriculum learning ---
 
     def _init_curriculum(self):
@@ -1158,6 +1324,131 @@ class Trainer:
         mask_bt = loss_mask.reshape(B * T)
         mask_btk = mask_bt.repeat_interleave(K)
         return F.cross_entropy(logits_flat[mask_btk], y_flat[mask_btk])
+
+    def _should_apply_decoded_loss(self, step: int) -> bool:
+        if not getattr(self, "decoded_loss_enabled", False):
+            return False
+        cfg = self.cfg
+        if step < cfg.decoded_loss_start_step:
+            return False
+        return (step - cfg.decoded_loss_start_step) % cfg.decoded_loss_every == 0
+
+    def _compute_decoded_domain_loss(
+        self,
+        logits: torch.Tensor,
+        y: torch.Tensor,
+        loss_mask: torch.Tensor,
+    ) -> Tuple[torch.Tensor, Dict[str, float]]:
+        if not getattr(self, "decoded_loss_enabled", False) or self.decoded_stft_loss is None:
+            zero = logits.new_zeros(())
+            return zero, {
+                "decoded_loss_total": 0.0,
+                "decoded_loss_waveform_l1": 0.0,
+                "decoded_loss_stft": 0.0,
+                "decoded_loss_spectral_convergence": 0.0,
+                "decoded_loss_log_magnitude": 0.0,
+                "decoded_loss_items": 0.0,
+            }
+
+        cfg = self.cfg
+        logits_f = logits.float()
+        if loss_mask.dim() == 1:
+            mask_bt = loss_mask.unsqueeze(0).expand(logits.shape[0], -1)
+        else:
+            mask_bt = loss_mask
+        mask_bt = mask_bt.bool()
+        mask_lengths = mask_bt.sum(dim=1)
+        valid = torch.nonzero(mask_lengths > 0, as_tuple=False).flatten()
+        if valid.numel() == 0:
+            zero = logits.new_zeros(())
+            return zero, {
+                "decoded_loss_total": 0.0,
+                "decoded_loss_waveform_l1": 0.0,
+                "decoded_loss_stft": 0.0,
+                "decoded_loss_spectral_convergence": 0.0,
+                "decoded_loss_log_magnitude": 0.0,
+                "decoded_loss_items": 0.0,
+            }
+
+        ranked = valid[torch.argsort(mask_lengths[valid], descending=True)]
+        selected = ranked[: cfg.decoded_loss_max_items]
+
+        total_wave_l1 = logits.new_zeros((), dtype=torch.float32)
+        total_stft = logits.new_zeros((), dtype=torch.float32)
+        total_sc = logits.new_zeros((), dtype=torch.float32)
+        total_log_mag = logits.new_zeros((), dtype=torch.float32)
+
+        with torch.autocast(device_type=self.device.type, enabled=False):
+            for b_idx in selected.tolist():
+                sample_mask = mask_bt[b_idx]
+                mask_positions = torch.nonzero(sample_mask, as_tuple=False).flatten()
+                start_t = max(0, int(mask_positions[0].item()) - cfg.decoded_loss_margin_frames)
+                end_t = min(int(sample_mask.shape[0]), int(mask_positions[-1].item()) + 1 + cfg.decoded_loss_margin_frames)
+
+                target_codes = y[b_idx : b_idx + 1, :, start_t:end_t]
+                target_mask = sample_mask[start_t:end_t].unsqueeze(0)
+                logits_slice = logits_f[b_idx : b_idx + 1, :, start_t:end_t, :]
+
+                with torch.no_grad():
+                    target_embeddings = self.encoder.codes_to_embeddings(target_codes).detach()
+                soft_embeddings = self.encoder.logits_to_embeddings(
+                    logits_slice,
+                    temperature=cfg.decoded_loss_temperature,
+                )
+                mask_f = target_mask.unsqueeze(1).to(device=soft_embeddings.device, dtype=soft_embeddings.dtype)
+                pred_embeddings = target_embeddings.to(dtype=soft_embeddings.dtype) * (1.0 - mask_f) + soft_embeddings * mask_f
+
+                pred_audio = self.encoder.decode_embeddings(pred_embeddings).squeeze(1)
+                with torch.no_grad():
+                    target_audio = self.encoder.decode_embeddings(target_embeddings).squeeze(1).detach()
+
+                wave_l1 = F.l1_loss(pred_audio, target_audio)
+                stft_terms = self.decoded_stft_loss(pred_audio, target_audio)
+
+                total_wave_l1 = total_wave_l1 + wave_l1
+                total_stft = total_stft + stft_terms["total"]
+                total_sc = total_sc + stft_terms["spectral_convergence"]
+                total_log_mag = total_log_mag + stft_terms["log_magnitude"]
+
+        denom = float(len(selected))
+        avg_wave_l1 = total_wave_l1 / denom
+        avg_stft = total_stft / denom
+        avg_sc = total_sc / denom
+        avg_log_mag = total_log_mag / denom
+        total = cfg.decoded_loss_weight * (
+            cfg.decoded_loss_waveform_l1_weight * avg_wave_l1
+            + cfg.decoded_loss_stft_weight * avg_stft
+        )
+        return total, {
+            "decoded_loss_total": float(total.detach().item()),
+            "decoded_loss_waveform_l1": float(avg_wave_l1.detach().item()),
+            "decoded_loss_stft": float(avg_stft.detach().item()),
+            "decoded_loss_spectral_convergence": float(avg_sc.detach().item()),
+            "decoded_loss_log_magnitude": float(avg_log_mag.detach().item()),
+            "decoded_loss_items": float(len(selected)),
+        }
+
+    def _compute_training_losses(
+        self,
+        logits: torch.Tensor,
+        y: torch.Tensor,
+        loss_mask: torch.Tensor,
+        step: int,
+    ) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, float]]:
+        token_loss = self._compute_loss(logits, y, loss_mask)
+        decoded_loss = logits.new_zeros(())
+        decoded_metrics = {
+            "decoded_loss_total": 0.0,
+            "decoded_loss_waveform_l1": 0.0,
+            "decoded_loss_stft": 0.0,
+            "decoded_loss_spectral_convergence": 0.0,
+            "decoded_loss_log_magnitude": 0.0,
+            "decoded_loss_items": 0.0,
+        }
+        if self._should_apply_decoded_loss(step):
+            decoded_loss, decoded_metrics = self._compute_decoded_domain_loss(logits, y, loss_mask)
+        total_loss = token_loss + decoded_loss
+        return total_loss, token_loss, decoded_metrics
 
     def _compute_masked_metrics(
         self,
@@ -1341,10 +1632,15 @@ class Trainer:
 
             with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=use_amp):
                 logits = self.model(x)
-                loss = self._compute_loss(logits, y, loss_mask)
+                total_loss, token_loss, decoded_metrics = self._compute_training_losses(
+                    logits,
+                    y,
+                    loss_mask,
+                    step=step,
+                )
 
             self.optimizer.zero_grad(set_to_none=True)
-            self.scaler.scale(loss).backward()
+            self.scaler.scale(total_loss).backward()
             self.scaler.unscale_(self.optimizer)
             grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), cfg.grad_clip).item()
             self.scaler.step(self.optimizer)
@@ -1355,9 +1651,10 @@ class Trainer:
                 correct = train_metrics["acc_top1"]
                 acc5 = train_metrics["acc_top5"]
 
-            loss_val = loss.item()
-            nll = loss_val
-            ppl = math.exp(min(loss_val, 20.0))
+            loss_val = total_loss.item()
+            token_loss_val = token_loss.item()
+            nll = token_loss_val
+            ppl = math.exp(min(token_loss_val, 20.0))
 
             running_loss += loss_val
             running_acc += correct
@@ -1367,12 +1664,27 @@ class Trainer:
             running_count += 1
 
             self.writer.add_scalar("train/loss", loss_val, step)
+            self.writer.add_scalar("train/token_loss", token_loss_val, step)
             self.writer.add_scalar("train/acc_top1", correct, step)
             self.writer.add_scalar("train/acc_top5", acc5, step)
             self.writer.add_scalar("train/ppl", ppl, step)
             self.writer.add_scalar("train/nll", nll, step)
             self.writer.add_scalar("train/lr", lr, step)
             self.writer.add_scalar("train/grad_norm", grad_norm, step)
+            self.writer.add_scalar("train/decoded_loss", decoded_metrics["decoded_loss_total"], step)
+            self.writer.add_scalar("train/decoded_loss_waveform_l1", decoded_metrics["decoded_loss_waveform_l1"], step)
+            self.writer.add_scalar("train/decoded_loss_stft", decoded_metrics["decoded_loss_stft"], step)
+            self.writer.add_scalar(
+                "train/decoded_loss_spectral_convergence",
+                decoded_metrics["decoded_loss_spectral_convergence"],
+                step,
+            )
+            self.writer.add_scalar(
+                "train/decoded_loss_log_magnitude",
+                decoded_metrics["decoded_loss_log_magnitude"],
+                step,
+            )
+            self.writer.add_scalar("train/decoded_loss_items", decoded_metrics["decoded_loss_items"], step)
 
             if hasattr(self.dataset, "pop_recent_metrics"):
                 sample_metrics = self.dataset.pop_recent_metrics(cfg.batch_size)
@@ -1734,6 +2046,23 @@ def parse_args(argv: Optional[List[str]] = None):
     parser.add_argument("--no-activity-guided-masking", dest="activity_guided_masking", action="store_false")
     parser.set_defaults(activity_guided_masking=None)
 
+    parser.add_argument("--decoded-loss-enabled", dest="decoded_loss_enabled", action="store_true")
+    parser.add_argument("--no-decoded-loss-enabled", dest="decoded_loss_enabled", action="store_false")
+    parser.set_defaults(decoded_loss_enabled=None)
+    parser.add_argument("--decoded-loss-weight", type=float, default=None)
+    parser.add_argument("--decoded-loss-start-step", type=int, default=None)
+    parser.add_argument("--decoded-loss-every", type=int, default=None)
+    parser.add_argument("--decoded-loss-max-items", type=int, default=None)
+    parser.add_argument("--decoded-loss-margin-frames", type=int, default=None)
+    parser.add_argument("--decoded-loss-temperature", type=float, default=None)
+    parser.add_argument("--decoded-loss-waveform-l1-weight", type=float, default=None)
+    parser.add_argument("--decoded-loss-stft-weight", type=float, default=None)
+    parser.add_argument("--decoded-loss-spectral-convergence-weight", type=float, default=None)
+    parser.add_argument("--decoded-loss-log-magnitude-weight", type=float, default=None)
+    parser.add_argument("--decoded-loss-n-ffts", nargs="+", type=int, default=None)
+    parser.add_argument("--decoded-loss-hop-lengths", nargs="+", type=int, default=None)
+    parser.add_argument("--decoded-loss-win-lengths", nargs="+", type=int, default=None)
+
     args = parser.parse_args(argv)
 
     if args.config:
@@ -1796,6 +2125,20 @@ def parse_args(argv: Optional[List[str]] = None):
         "regime_uniform_prob": args.regime_uniform_prob,
         "mask_stride": args.mask_stride,
         "activity_guided_masking": args.activity_guided_masking,
+        "decoded_loss_enabled": args.decoded_loss_enabled,
+        "decoded_loss_weight": args.decoded_loss_weight,
+        "decoded_loss_start_step": args.decoded_loss_start_step,
+        "decoded_loss_every": args.decoded_loss_every,
+        "decoded_loss_max_items": args.decoded_loss_max_items,
+        "decoded_loss_margin_frames": args.decoded_loss_margin_frames,
+        "decoded_loss_temperature": args.decoded_loss_temperature,
+        "decoded_loss_waveform_l1_weight": args.decoded_loss_waveform_l1_weight,
+        "decoded_loss_stft_weight": args.decoded_loss_stft_weight,
+        "decoded_loss_spectral_convergence_weight": args.decoded_loss_spectral_convergence_weight,
+        "decoded_loss_log_magnitude_weight": args.decoded_loss_log_magnitude_weight,
+        "decoded_loss_n_ffts": tuple(args.decoded_loss_n_ffts) if args.decoded_loss_n_ffts is not None else None,
+        "decoded_loss_hop_lengths": tuple(args.decoded_loss_hop_lengths) if args.decoded_loss_hop_lengths is not None else None,
+        "decoded_loss_win_lengths": tuple(args.decoded_loss_win_lengths) if args.decoded_loss_win_lengths is not None else None,
     }
     for key, value in cli_overrides.items():
         if value is not None:

@@ -56,11 +56,13 @@ activity_smooth_kernel: 9
 activity_low_quantile: 0.30
 activity_high_quantile: 0.70
 weighted_sampling: true
-dead_window_min_mean: 0.01
-dead_window_min_ratio: 0.03
-regime_active_prob: 0.45
+
+dead_window_min_mean: 0.005
+dead_window_min_ratio: 0.01
+regime_active_prob: 0.35
 regime_transition_prob: 0.30
-regime_low_prob: 0.15
-regime_uniform_prob: 0.10
+regime_low_prob: 0.20
+regime_uniform_prob: 0.15
+
 mask_stride: 1
 activity_guided_masking: true

@@ -76,6 +76,21 @@ class TrainConfig:
     mask_stride: int = 1
     activity_guided_masking: bool = True
 
+    decoded_loss_enabled: bool = False
+    decoded_loss_weight: float = 0.0
+    decoded_loss_start_step: int = 0
+    decoded_loss_every: int = 1
+    decoded_loss_max_items: int = 1
+    decoded_loss_margin_frames: int = 8
+    decoded_loss_temperature: float = 1.0
+    decoded_loss_waveform_l1_weight: float = 0.0
+    decoded_loss_stft_weight: float = 1.0
+    decoded_loss_spectral_convergence_weight: float = 1.0
+    decoded_loss_log_magnitude_weight: float = 1.0
+    decoded_loss_n_ffts: Tuple[int, ...] = (512, 1024, 2048)
+    decoded_loss_hop_lengths: Tuple[int, ...] = (128, 256, 512)
+    decoded_loss_win_lengths: Tuple[int, ...] = (512, 1024, 2048)
+
 
 def validate_train_config(cfg: TrainConfig):
     if cfg.seq_len <= 0:
@@ -106,6 +121,37 @@ def validate_train_config(cfg: TrainConfig):
         raise ValueError("num_workers must be >= 0")
     if cfg.mask_stride <= 0:
         raise ValueError("mask_stride must be > 0")
+    if cfg.decoded_loss_weight < 0:
+        raise ValueError("decoded_loss_weight must be >= 0")
+    if cfg.decoded_loss_start_step < 0:
+        raise ValueError("decoded_loss_start_step must be >= 0")
+    if cfg.decoded_loss_every <= 0:
+        raise ValueError("decoded_loss_every must be > 0")
+    if cfg.decoded_loss_max_items <= 0:
+        raise ValueError("decoded_loss_max_items must be > 0")
+    if cfg.decoded_loss_margin_frames < 0:
+        raise ValueError("decoded_loss_margin_frames must be >= 0")
+    if cfg.decoded_loss_temperature <= 0:
+        raise ValueError("decoded_loss_temperature must be > 0")
+    for name in [
+        "decoded_loss_waveform_l1_weight",
+        "decoded_loss_stft_weight",
+        "decoded_loss_spectral_convergence_weight",
+        "decoded_loss_log_magnitude_weight",
+    ]:
+        if getattr(cfg, name) < 0:
+            raise ValueError(f"{name} must be >= 0")
+    if not (len(cfg.decoded_loss_n_ffts) == len(cfg.decoded_loss_hop_lengths) == len(cfg.decoded_loss_win_lengths)):
+        raise ValueError("decoded loss STFT parameter lists must have the same length")
+    if len(cfg.decoded_loss_n_ffts) == 0:
+        raise ValueError("decoded loss STFT parameter lists must be non-empty")
+    for idx, (n_fft, hop, win) in enumerate(
+        zip(cfg.decoded_loss_n_ffts, cfg.decoded_loss_hop_lengths, cfg.decoded_loss_win_lengths)
+    ):
+        if n_fft <= 0 or hop <= 0 or win <= 0:
+            raise ValueError(f"decoded loss STFT params must be > 0 at index {idx}")
+        if win > n_fft:
+            raise ValueError(f"decoded loss win_length must be <= n_fft at index {idx}")
     if not (0.0 <= cfg.activity_low_quantile <= 1.0):
         raise ValueError("activity_low_quantile must be in [0, 1]")
     if not (0.0 <= cfg.activity_high_quantile <= 1.0):
@@ -286,6 +332,23 @@ def parse_args(argv: Optional[List[str]] = None):
     parser.add_argument("--no-activity-guided-masking", dest="activity_guided_masking", action="store_false")
     parser.set_defaults(activity_guided_masking=None)
 
+    parser.add_argument("--decoded-loss-enabled", dest="decoded_loss_enabled", action="store_true")
+    parser.add_argument("--no-decoded-loss-enabled", dest="decoded_loss_enabled", action="store_false")
+    parser.set_defaults(decoded_loss_enabled=None)
+    parser.add_argument("--decoded-loss-weight", type=float, default=None)
+    parser.add_argument("--decoded-loss-start-step", type=int, default=None)
+    parser.add_argument("--decoded-loss-every", type=int, default=None)
+    parser.add_argument("--decoded-loss-max-items", type=int, default=None)
+    parser.add_argument("--decoded-loss-margin-frames", type=int, default=None)
+    parser.add_argument("--decoded-loss-temperature", type=float, default=None)
+    parser.add_argument("--decoded-loss-waveform-l1-weight", type=float, default=None)
+    parser.add_argument("--decoded-loss-stft-weight", type=float, default=None)
+    parser.add_argument("--decoded-loss-spectral-convergence-weight", type=float, default=None)
+    parser.add_argument("--decoded-loss-log-magnitude-weight", type=float, default=None)
+    parser.add_argument("--decoded-loss-n-ffts", nargs="+", type=int, default=None)
+    parser.add_argument("--decoded-loss-hop-lengths", nargs="+", type=int, default=None)
+    parser.add_argument("--decoded-loss-win-lengths", nargs="+", type=int, default=None)
+
     args = parser.parse_args(argv)
 
     if args.config:
@@ -351,6 +414,20 @@ def parse_args(argv: Optional[List[str]] = None):
         "regime_uniform_prob": args.regime_uniform_prob,
         "mask_stride": args.mask_stride,
         "activity_guided_masking": args.activity_guided_masking,
+        "decoded_loss_enabled": args.decoded_loss_enabled,
+        "decoded_loss_weight": args.decoded_loss_weight,
+        "decoded_loss_start_step": args.decoded_loss_start_step,
+        "decoded_loss_every": args.decoded_loss_every,
+        "decoded_loss_max_items": args.decoded_loss_max_items,
+        "decoded_loss_margin_frames": args.decoded_loss_margin_frames,
+        "decoded_loss_temperature": args.decoded_loss_temperature,
+        "decoded_loss_waveform_l1_weight": args.decoded_loss_waveform_l1_weight,
+        "decoded_loss_stft_weight": args.decoded_loss_stft_weight,
+        "decoded_loss_spectral_convergence_weight": args.decoded_loss_spectral_convergence_weight,
+        "decoded_loss_log_magnitude_weight": args.decoded_loss_log_magnitude_weight,
+        "decoded_loss_n_ffts": tuple(args.decoded_loss_n_ffts) if args.decoded_loss_n_ffts is not None else None,
+        "decoded_loss_hop_lengths": tuple(args.decoded_loss_hop_lengths) if args.decoded_loss_hop_lengths is not None else None,
+        "decoded_loss_win_lengths": tuple(args.decoded_loss_win_lengths) if args.decoded_loss_win_lengths is not None else None,
     }
     for key, value in overrides.items():
         if value is not None:
