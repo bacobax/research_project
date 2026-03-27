@@ -42,6 +42,16 @@ class TrainConfig:
     validation_every: int = 0
     validation_examples_per_band: int = 64
     validation_batch_size: Optional[int] = None
+    validation_strategy: str = "random_windows"
+    validation_regions_per_band: int = 1
+    validation_region_len_frames: Optional[int] = None
+    validation_region_min_separation_frames: Optional[int] = None
+    validation_examples_per_length_band: int = 8
+    validation_mask_lengths: Tuple[int, ...] = ()
+    validation_inspection_enabled: bool = False
+    validation_inspection_examples_per_group: int = 1
+    validation_crop_context_frames: Optional[int] = None
+    validation_save_artifacts: bool = True
     num_workers: int = 2
 
     output_dir: str = "outputs/runs"
@@ -117,6 +127,26 @@ def validate_train_config(cfg: TrainConfig):
         raise ValueError("validation_examples_per_band must be > 0")
     if cfg.validation_batch_size is not None and cfg.validation_batch_size <= 0:
         raise ValueError("validation_batch_size must be > 0 when provided")
+    if cfg.validation_strategy not in {"random_windows", "holdout_regions"}:
+        raise ValueError("validation_strategy must be 'random_windows' or 'holdout_regions'")
+    if cfg.validation_regions_per_band <= 0:
+        raise ValueError("validation_regions_per_band must be > 0")
+    if cfg.validation_region_len_frames is not None and cfg.validation_region_len_frames <= 0:
+        raise ValueError("validation_region_len_frames must be > 0 when provided")
+    if cfg.validation_region_min_separation_frames is not None and cfg.validation_region_min_separation_frames < 0:
+        raise ValueError("validation_region_min_separation_frames must be >= 0 when provided")
+    if cfg.validation_examples_per_length_band <= 0:
+        raise ValueError("validation_examples_per_length_band must be > 0")
+    if any(v <= 0 for v in cfg.validation_mask_lengths):
+        raise ValueError("validation_mask_lengths must contain only positive values")
+    if cfg.validation_mask_lengths and max(cfg.validation_mask_lengths) > cfg.seq_len:
+        raise ValueError("validation_mask_lengths must be <= seq_len")
+    if cfg.validation_strategy == "holdout_regions" and len(cfg.validation_mask_lengths) == 0:
+        raise ValueError("validation_mask_lengths must be non-empty when validation_strategy='holdout_regions'")
+    if cfg.validation_inspection_examples_per_group <= 0:
+        raise ValueError("validation_inspection_examples_per_group must be > 0")
+    if cfg.validation_crop_context_frames is not None and cfg.validation_crop_context_frames < 0:
+        raise ValueError("validation_crop_context_frames must be >= 0 when provided")
     if cfg.num_workers < 0:
         raise ValueError("num_workers must be >= 0")
     if cfg.mask_stride <= 0:
@@ -214,7 +244,11 @@ def load_yaml_config(path: str) -> Dict[str, Any]:
                 if ":" not in line:
                     continue
                 key, value = line.split(":", 1)
-                mapping[key.strip()] = _parse_simple_yaml_value(value)
+                parsed = _parse_simple_yaml_value(value)
+                name = key.strip().replace("-", "_")
+                if name in {"betas", "validation_mask_lengths"} and isinstance(parsed, list):
+                    parsed = tuple(parsed)
+                mapping[key.strip()] = parsed
         return mapping
 
 
@@ -297,6 +331,20 @@ def parse_args(argv: Optional[List[str]] = None):
     parser.add_argument("--validation-every", type=int, default=None)
     parser.add_argument("--validation-examples-per-band", type=int, default=None)
     parser.add_argument("--validation-batch-size", type=int, default=None)
+    parser.add_argument("--validation-strategy", choices=["random_windows", "holdout_regions"], default=None)
+    parser.add_argument("--validation-regions-per-band", type=int, default=None)
+    parser.add_argument("--validation-region-len-frames", type=int, default=None)
+    parser.add_argument("--validation-region-min-separation-frames", type=int, default=None)
+    parser.add_argument("--validation-examples-per-length-band", type=int, default=None)
+    parser.add_argument("--validation-mask-lengths", nargs="+", type=int, default=None)
+    parser.add_argument("--validation-inspection-enabled", dest="validation_inspection_enabled", action="store_true")
+    parser.add_argument("--no-validation-inspection-enabled", dest="validation_inspection_enabled", action="store_false")
+    parser.set_defaults(validation_inspection_enabled=None)
+    parser.add_argument("--validation-inspection-examples-per-group", type=int, default=None)
+    parser.add_argument("--validation-crop-context-frames", type=int, default=None)
+    parser.add_argument("--validation-save-artifacts", dest="validation_save_artifacts", action="store_true")
+    parser.add_argument("--no-validation-save-artifacts", dest="validation_save_artifacts", action="store_false")
+    parser.set_defaults(validation_save_artifacts=None)
     parser.add_argument("--num-workers", type=int, default=None)
 
     parser.add_argument("--output-dir", type=str, default=None)
@@ -357,7 +405,9 @@ def parse_args(argv: Optional[List[str]] = None):
         for key, value in data.items():
             name = key.replace("-", "_")
             if hasattr(cfg, name):
-                setattr(cfg, name, tuple(value) if name == "betas" and isinstance(value, list) else value)
+                if name in {"betas", "validation_mask_lengths"} and isinstance(value, list):
+                    value = tuple(value)
+                setattr(cfg, name, value)
 
     overrides = {
         "ds_dir": args.ds_dir,
@@ -390,6 +440,16 @@ def parse_args(argv: Optional[List[str]] = None):
         "validation_every": args.validation_every,
         "validation_examples_per_band": args.validation_examples_per_band,
         "validation_batch_size": args.validation_batch_size,
+        "validation_strategy": args.validation_strategy,
+        "validation_regions_per_band": args.validation_regions_per_band,
+        "validation_region_len_frames": args.validation_region_len_frames,
+        "validation_region_min_separation_frames": args.validation_region_min_separation_frames,
+        "validation_examples_per_length_band": args.validation_examples_per_length_band,
+        "validation_mask_lengths": tuple(args.validation_mask_lengths) if args.validation_mask_lengths is not None else None,
+        "validation_inspection_enabled": args.validation_inspection_enabled,
+        "validation_inspection_examples_per_group": args.validation_inspection_examples_per_group,
+        "validation_crop_context_frames": args.validation_crop_context_frames,
+        "validation_save_artifacts": args.validation_save_artifacts,
         "num_workers": args.num_workers,
         "output_dir": args.output_dir,
         "run_name": args.run_name,
