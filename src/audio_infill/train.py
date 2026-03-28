@@ -51,6 +51,7 @@ class TrainConfig:
     n_layers: int = 8
     max_len: int = 2048
     dropout: float = 0.1
+    boundary_max_distance: int = 128
 
     seq_len: int = 1024
     mask_len_min: int = 64
@@ -446,6 +447,54 @@ def frame_bounds_to_sample_bounds(
     start_sample = min(max(0, start_sample), total_samples - 1)
     end_sample = min(max(start_sample + 1, end_sample), total_samples)
     return start_sample, end_sample
+
+
+def build_boundary_condition_tensors(
+    loss_mask: torch.Tensor,
+    max_distance: int,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if max_distance <= 0:
+        raise ValueError("max_distance must be > 0")
+    if loss_mask.dim() == 1:
+        loss_mask = loss_mask.unsqueeze(0)
+    if loss_mask.dim() != 2:
+        raise ValueError(f"loss_mask must have shape [T] or [B,T], got {tuple(loss_mask.shape)}")
+
+    mask = loss_mask.bool()
+    batch, steps = mask.shape
+    if steps <= 0:
+        raise ValueError("loss_mask must have at least one timestep")
+    if not torch.all(mask.any(dim=1)):
+        raise ValueError("Each boundary-conditioned example must contain at least one masked timestep")
+
+    first_mask = mask.float().argmax(dim=1)
+    last_mask_from_end = torch.flip(mask, dims=[1]).float().argmax(dim=1)
+    gap_end = steps - last_mask_from_end
+
+    positions = torch.arange(steps, device=mask.device, dtype=torch.long).unsqueeze(0).expand(batch, -1)
+    gap_mask = (positions >= first_mask.unsqueeze(1)) & (positions < gap_end.unsqueeze(1))
+    if not torch.equal(gap_mask, mask):
+        raise ValueError("Boundary conditioning requires exactly one contiguous masked span per example")
+
+    segment_ids = torch.zeros((batch, steps), device=mask.device, dtype=torch.long)
+    segment_ids = torch.where(positions >= gap_end.unsqueeze(1), torch.full_like(segment_ids, 2), segment_ids)
+    segment_ids = torch.where(gap_mask, torch.full_like(segment_ids, 1), segment_ids)
+
+    max_d = int(max_distance)
+    left_distance = (positions - first_mask.unsqueeze(1)).clamp(min=-max_d, max=max_d) + max_d
+    right_distance = (gap_end.unsqueeze(1) - positions).clamp(min=-max_d, max=max_d) + max_d
+    return segment_ids, left_distance.long(), right_distance.long()
+
+
+def build_boundary_condition_tensors_from_mask_token(
+    x: torch.Tensor,
+    mask_token: int,
+    max_distance: int,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if x.dim() != 3:
+        raise ValueError(f"x must have shape [B,K,T], got {tuple(x.shape)}")
+    mask = (x == int(mask_token)).all(dim=1)
+    return build_boundary_condition_tensors(mask, max_distance=max_distance)
 
 
 def compute_log_spectrogram_data(
@@ -1341,19 +1390,26 @@ class JointCodebookInfiller(nn.Module):
         self,
         K: int,
         bins: int,
+        mask_token: int,
         d_model: int = 512,
         n_heads: int = 8,
         n_layers: int = 8,
         max_len: int = 2048,
         dropout: float = 0.1,
+        boundary_max_distance: int = 128,
     ):
         super().__init__()
         self.K = K
         self.bins = bins
         self.vocab = bins + 1
+        self.mask_token = int(mask_token)
+        self.boundary_max_distance = int(boundary_max_distance)
 
         self.emb = nn.ModuleList([nn.Embedding(self.vocab, d_model) for _ in range(K)])
         self.pos = nn.Embedding(max_len, d_model)
+        self.segment_emb = nn.Embedding(3, d_model)
+        self.left_distance_emb = nn.Embedding(2 * self.boundary_max_distance + 1, d_model)
+        self.right_distance_emb = nn.Embedding(2 * self.boundary_max_distance + 1, d_model)
 
         enc_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
@@ -1367,12 +1423,30 @@ class JointCodebookInfiller(nn.Module):
         self.enc = nn.TransformerEncoder(enc_layer, num_layers=n_layers)
         self.head = nn.ModuleList([nn.Linear(d_model, bins) for _ in range(K)])
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        segment_ids: Optional[torch.Tensor] = None,
+        left_dist_idx: Optional[torch.Tensor] = None,
+        right_dist_idx: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         B, K, T = x.shape
+        if segment_ids is None or left_dist_idx is None or right_dist_idx is None:
+            segment_ids, left_dist_idx, right_dist_idx = build_boundary_condition_tensors_from_mask_token(
+                x,
+                mask_token=self.mask_token,
+                max_distance=self.boundary_max_distance,
+            )
+        segment_ids = segment_ids.to(device=x.device, dtype=torch.long)
+        left_dist_idx = left_dist_idx.to(device=x.device, dtype=torch.long)
+        right_dist_idx = right_dist_idx.to(device=x.device, dtype=torch.long)
         pos = torch.arange(T, device=x.device).unsqueeze(0).expand(B, T)
         h = self.pos(pos)
         for k in range(K):
             h = h + self.emb[k](x[:, k, :])
+        h = h + self.segment_emb(segment_ids)
+        h = h + self.left_distance_emb(left_dist_idx)
+        h = h + self.right_distance_emb(right_dist_idx)
         h = self.enc(h)
         logits = torch.stack([self.head[k](h) for k in range(K)], dim=1)
         return logits
@@ -1767,16 +1841,27 @@ class Trainer:
         self.model = JointCodebookInfiller(
             K=self.K,
             bins=self.bins,
+            mask_token=self.mask_token,
             d_model=cfg.d_model,
             n_heads=cfg.n_heads,
             n_layers=cfg.n_layers,
             max_len=cfg.max_len,
             dropout=cfg.dropout,
+            boundary_max_distance=cfg.boundary_max_distance,
         ).to(self.device)
 
         n_params = sum(p.numel() for p in self.model.parameters())
         logger.info("Model params: %.2fM", n_params / 1e6)
         self.writer.add_scalar("model/params_M", n_params / 1e6, 0)
+
+    def _build_model_boundary_tensors(
+        self,
+        loss_mask: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        return build_boundary_condition_tensors(
+            loss_mask,
+            max_distance=self.cfg.boundary_max_distance,
+        )
 
     def _build_optimizer(self):
         cfg = self.cfg
@@ -2049,7 +2134,8 @@ class Trainer:
     @torch.no_grad()
     def _predict_validation_window(self, example: FixedValidationExample) -> torch.Tensor:
         xb = example.x.unsqueeze(0).to(self.device, non_blocking=True)
-        logits = self.model(xb)
+        seg_ids, left_idx, right_idx = self._build_model_boundary_tensors(example.loss_mask.to(self.device))
+        logits = self.model(xb, seg_ids, left_idx, right_idx)
         pred = logits.argmax(dim=-1).squeeze(0).detach().cpu()
         filled = example.y.clone()
         filled[:, example.loss_mask] = pred[:, example.loss_mask]
@@ -2283,8 +2369,9 @@ class Trainer:
                     x = x.to(self.device, non_blocking=True)
                     y = y.to(self.device, non_blocking=True)
                     loss_mask = loss_mask.to(self.device, non_blocking=True).bool()
+                    seg_ids, left_idx, right_idx = self._build_model_boundary_tensors(loss_mask)
                     with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=use_amp):
-                        logits = self.model(x)
+                        logits = self.model(x, seg_ids, left_idx, right_idx)
                         loss = self._compute_loss(logits, y, loss_mask)
                     metrics = self._compute_masked_metrics(logits, y, loss_mask)
                     batch_size = int(x.shape[0])
@@ -2376,8 +2463,35 @@ class Trainer:
 
     def load_checkpoint(self, path: str):
         ckpt = torch.load(path, map_location=self.device, weights_only=False)
-        self.model.load_state_dict(ckpt["model"])
-        self.optimizer.load_state_dict(ckpt["optimizer"])
+        model_state = ckpt["model"]
+        boundary_compat_mode = False
+        try:
+            self.model.load_state_dict(model_state)
+        except RuntimeError as exc:
+            incompatible = self.model.load_state_dict(model_state, strict=False)
+            allowed_missing = {
+                "segment_emb.weight",
+                "left_distance_emb.weight",
+                "right_distance_emb.weight",
+            }
+            missing = set(incompatible.missing_keys)
+            unexpected = set(incompatible.unexpected_keys)
+            if unexpected or not missing.issubset(allowed_missing):
+                raise exc
+            boundary_compat_mode = True
+            logger.warning(
+                "Loaded checkpoint without boundary-aware embeddings; newly initialized keys=%s",
+                sorted(missing),
+            )
+        if boundary_compat_mode:
+            try:
+                self.optimizer.load_state_dict(ckpt["optimizer"])
+            except ValueError:
+                logger.warning(
+                    "Checkpoint optimizer state is incompatible with boundary-aware parameters; using fresh optimizer state"
+                )
+        else:
+            self.optimizer.load_state_dict(ckpt["optimizer"])
         self.scaler.load_state_dict(ckpt["scaler"])
         self.global_step = ckpt["step"]
         self.best_loss = ckpt.get("best_loss", float("inf"))
@@ -2435,12 +2549,13 @@ class Trainer:
             x = x.to(self.device, non_blocking=True)
             y = y.to(self.device, non_blocking=True)
             loss_mask = loss_mask.to(self.device, non_blocking=True).bool()
+            seg_ids, left_idx, right_idx = self._build_model_boundary_tensors(loss_mask)
 
             lr = self._get_lr(step)
             self._set_lr(lr)
 
             with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=use_amp):
-                logits = self.model(x)
+                logits = self.model(x, seg_ids, left_idx, right_idx)
                 total_loss, token_loss, decoded_metrics = self._compute_training_losses(
                     logits,
                     y,
@@ -2800,6 +2915,7 @@ def parse_args(argv: Optional[List[str]] = None):
     parser.add_argument("--n-layers", type=int, default=None)
     parser.add_argument("--max-len", type=int, default=None)
     parser.add_argument("--dropout", type=float, default=None)
+    parser.add_argument("--boundary-max-distance", type=int, default=None)
 
     parser.add_argument("--seq-len", type=int, default=None)
     parser.add_argument("--mask-len-min", type=int, default=None)
@@ -2912,6 +3028,7 @@ def parse_args(argv: Optional[List[str]] = None):
         "n_layers": args.n_layers,
         "max_len": args.max_len,
         "dropout": args.dropout,
+        "boundary_max_distance": args.boundary_max_distance,
         "seq_len": args.seq_len,
         "mask_len_min": args.mask_len_min,
         "mask_len_max": args.mask_len_max,

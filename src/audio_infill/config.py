@@ -24,6 +24,7 @@ class TrainConfig:
     n_layers: int = 8
     max_len: int = 2048
     dropout: float = 0.1
+    boundary_max_distance: int = 128
 
     seq_len: int = 1024
     mask_len_min: int = 64
@@ -111,6 +112,8 @@ def validate_train_config(cfg: TrainConfig):
         raise ValueError("mask_len_max must be >= mask_len_min")
     if cfg.batch_size <= 0:
         raise ValueError("batch_size must be > 0")
+    if cfg.boundary_max_distance <= 0:
+        raise ValueError("boundary_max_distance must be > 0")
     if cfg.total_steps <= 0:
         raise ValueError("total_steps must be > 0")
     if cfg.warmup_steps < 0:
@@ -311,6 +314,7 @@ def parse_args(argv: Optional[List[str]] = None):
     parser.add_argument("--n-layers", type=int, default=None)
     parser.add_argument("--max-len", type=int, default=None)
     parser.add_argument("--dropout", type=float, default=None)
+    parser.add_argument("--boundary-max-distance", type=int, default=None)
 
     parser.add_argument("--seq-len", type=int, default=None)
     parser.add_argument("--mask-len-min", type=int, default=None)
@@ -422,6 +426,7 @@ def parse_args(argv: Optional[List[str]] = None):
         "n_layers": args.n_layers,
         "max_len": args.max_len,
         "dropout": args.dropout,
+        "boundary_max_distance": args.boundary_max_distance,
         "seq_len": args.seq_len,
         "mask_len_min": args.mask_len_min,
         "mask_len_max": args.mask_len_max,

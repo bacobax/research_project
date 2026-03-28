@@ -51,7 +51,7 @@ class TinyModel(nn.Module):
         super().__init__()
         self.logits = nn.Parameter(torch.zeros((2, vocab), dtype=torch.float32))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, segment_ids=None, left_dist_idx=None, right_dist_idx=None) -> torch.Tensor:
         b, k, t = x.shape
         return self.logits.unsqueeze(0).unsqueeze(2).expand(b, -1, t, -1)
 
@@ -106,6 +106,8 @@ class TestValidationIntegration(unittest.TestCase):
                 "high_activity": make_validation_loader("high_activity"),
                 "low_activity": make_validation_loader("low_activity"),
             }
+            trainer.validation_group_specs = {}
+            trainer.validation_inspection_examples = {}
             trainer.model = TinyModel(vocab=5)
             trainer.optimizer = torch.optim.AdamW(trainer.model.parameters(), lr=1e-3)
             trainer.scaler = torch.amp.GradScaler(enabled=False)

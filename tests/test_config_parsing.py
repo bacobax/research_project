@@ -17,6 +17,7 @@ class TestConfigParsing(unittest.TestCase):
         self.assertEqual(cfg.run_name, "infiller")
         self.assertEqual(cfg.betas, (0.9, 0.95))
         self.assertEqual(cfg.device, "auto")
+        self.assertEqual(cfg.boundary_max_distance, 128)
         self.assertEqual(cfg.activity_smooth_kernel, 9)
         self.assertAlmostEqual(cfg.activity_low_quantile, 0.30)
         self.assertAlmostEqual(cfg.activity_high_quantile, 0.70)
@@ -31,11 +32,14 @@ class TestConfigParsing(unittest.TestCase):
             "123",
             "--device",
             "cpu",
+            "--boundary-max-distance",
+            "64",
             "--no-weighted-sampling",
             "--no-activity-guided-masking",
         ])
         self.assertEqual(cfg.total_steps, 123)
         self.assertEqual(cfg.device, "cpu")
+        self.assertEqual(cfg.boundary_max_distance, 64)
         self.assertFalse(cfg.weighted_sampling)
         self.assertFalse(cfg.activity_guided_masking)
 

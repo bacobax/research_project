@@ -1,0 +1,97 @@
+config: configs/train/multigap_decoded_loss_val_v3_boundary.yaml
+ds_dir: data/processed/multigap
+sample: wav_test_multigap_4x_1p0s_2p0s_5p0s_10p0s
+auto_hparam: true
+
+wav_path: data/interim/gapped_audio.wav
+target_sr: 24000
+bandwidth: 6.0
+gap_start_s: 200.0
+gap_end_s: 210.0
+
+d_model: 512
+n_heads: 8
+n_layers: 8
+max_len: 1124
+dropout: 0.1
+boundary_max_distance: 128
+
+seq_len: 1124
+mask_len_min: 187
+mask_len_max: 750
+ctx_left: null
+ctx_right: null
+
+batch_size: 16
+lr: 0.0003
+weight_decay: 0.01
+betas: [0.9, 0.95]
+grad_clip: 1.5
+warmup_steps: 7000
+
+total_steps: 800000
+
+log_every: 6000
+save_every: 54000
+test_fill_every: 54000
+
+validation_every: 27000
+validation_examples_per_band: 64
+validation_batch_size: 16
+validation_strategy: holdout_regions
+validation_regions_per_band: 1
+validation_region_len_frames: 1536
+validation_region_min_separation_frames: 1124
+validation_examples_per_length_band: 8
+validation_mask_lengths: [187, 375, 750]
+validation_inspection_enabled: true
+validation_inspection_examples_per_group: 1
+validation_crop_context_frames: null
+validation_save_artifacts: true
+num_workers: 2
+
+output_dir: outputs/runs
+run_name: longrun_multigap_decoded_loss_val_v3_boundary
+seed: 42
+device: cuda:3
+
+resume: null
+inpaint_only: false
+inpaint_iters: 1
+inpaint_output: null
+
+curriculum: true
+curriculum_start_mask: 128
+curriculum_end_mask: 750
+curriculum_warmup_frac: 0.1
+curriculum_schedule: linear
+
+activity_smooth_kernel: 9
+activity_low_quantile: 0.30
+activity_high_quantile: 0.70
+weighted_sampling: true
+
+dead_window_min_mean: 0.005
+dead_window_min_ratio: 0.01
+regime_active_prob: 0.35
+regime_transition_prob: 0.30
+regime_low_prob: 0.20
+regime_uniform_prob: 0.15
+
+mask_stride: 1
+activity_guided_masking: true
+
+decoded_loss_enabled: true
+decoded_loss_weight: 0.10
+decoded_loss_start_step: 7000
+decoded_loss_every: 4
+decoded_loss_max_items: 1
+decoded_loss_margin_frames: 16
+decoded_loss_temperature: 1.0
+decoded_loss_waveform_l1_weight: 0.25
+decoded_loss_stft_weight: 1.0
+decoded_loss_spectral_convergence_weight: 1.0
+decoded_loss_log_magnitude_weight: 1.0
+decoded_loss_n_ffts: [512, 1024, 2048]
+decoded_loss_hop_lengths: [128, 256, 512]
+decoded_loss_win_lengths: [512, 1024, 2048]

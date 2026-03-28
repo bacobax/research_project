@@ -22,6 +22,7 @@ class TestValidationConfig(unittest.TestCase):
         self.assertEqual(cfg.validation_inspection_examples_per_group, 1)
         self.assertIsNone(cfg.validation_crop_context_frames)
         self.assertTrue(cfg.validation_save_artifacts)
+        self.assertEqual(cfg.boundary_max_distance, 128)
 
     def test_cli_overrides_apply_in_train_parser(self):
         cfg, _ = parse_train_args(
@@ -40,6 +41,8 @@ class TestValidationConfig(unittest.TestCase):
                 "--validation-crop-context-frames",
                 "120",
                 "--no-validation-save-artifacts",
+                "--boundary-max-distance",
+                "96",
             ]
         )
         self.assertEqual(cfg.validation_every, 12)
@@ -49,6 +52,7 @@ class TestValidationConfig(unittest.TestCase):
         self.assertEqual(cfg.validation_inspection_examples_per_group, 2)
         self.assertEqual(cfg.validation_crop_context_frames, 120)
         self.assertFalse(cfg.validation_save_artifacts)
+        self.assertEqual(cfg.boundary_max_distance, 96)
 
 
 if __name__ == "__main__":

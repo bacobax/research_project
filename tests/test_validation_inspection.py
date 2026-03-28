@@ -48,7 +48,7 @@ class ConstantZeroModel(nn.Module):
         self.bias = nn.Parameter(torch.zeros(1))
         self.vocab = vocab
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, segment_ids=None, left_dist_idx=None, right_dist_idx=None) -> torch.Tensor:
         b, k, t = x.shape
         return torch.zeros((b, k, t, self.vocab), dtype=torch.float32, device=x.device) + self.bias
 

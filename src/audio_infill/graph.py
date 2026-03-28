@@ -93,6 +93,7 @@ def main(argv=None):
     model = JointCodebookInfiller(
         K=cfg.codebooks,
         bins=cfg.bins,
+        mask_token=cfg.bins,
         d_model=cfg.d_model,
         n_heads=cfg.n_heads,
         n_layers=cfg.n_layers,
@@ -101,6 +102,9 @@ def main(argv=None):
     )
 
     dummy_input = torch.randint(0, cfg.bins, (cfg.batch_size, cfg.codebooks, cfg.time_steps))
+    gap_start = max(0, cfg.time_steps // 3)
+    gap_end = min(cfg.time_steps, gap_start + max(1, cfg.time_steps // 6))
+    dummy_input[:, :, gap_start:gap_end] = cfg.bins
     output = model(dummy_input)
 
     out_dir = Path(cfg.out_dir)

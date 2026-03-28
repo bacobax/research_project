@@ -33,7 +33,7 @@ class ConstantZeroModel(nn.Module):
         self.bias = nn.Parameter(torch.zeros(1))
         self.vocab = vocab
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, segment_ids=None, left_dist_idx=None, right_dist_idx=None) -> torch.Tensor:
         b, k, t = x.shape
         return torch.zeros((b, k, t, self.vocab), dtype=torch.float32, device=x.device) + self.bias
 
@@ -76,10 +76,12 @@ class TestValidationRunner(unittest.TestCase):
             trainer.optimizer = torch.optim.AdamW(trainer.model.parameters(), lr=1e-3)
             trainer.scaler = torch.amp.GradScaler(enabled=False)
             trainer.validation_enabled = True
+            trainer.validation_group_specs = {}
             trainer.validation_dataloaders = {
                 "high_activity": DataLoader(make_validation_dataset("high_activity"), batch_size=2, shuffle=False),
                 "low_activity": DataLoader(make_validation_dataset("low_activity"), batch_size=2, shuffle=False),
             }
+            trainer.validation_inspection_examples = {}
             trainer.best_loss = float("inf")
             trainer.best_val_loss = float("inf")
             trainer.global_step = 0
