@@ -1,6 +1,5 @@
 import sys
 import unittest
-from dataclasses import fields
 from pathlib import Path
 
 
@@ -16,10 +15,11 @@ from audio_infill.train import parse_args as parse_train_args
 
 
 class TestTrainConfigSchema(unittest.TestCase):
-    def test_shared_and_runtime_train_config_fields_match(self):
-        shared_fields = [(f.name, f.default) for f in fields(SharedTrainConfig)]
-        runtime_fields = [(f.name, f.default) for f in fields(RuntimeTrainConfig)]
-        self.assertEqual(shared_fields, runtime_fields)
+    def test_runtime_reuses_shared_train_config(self):
+        self.assertIs(RuntimeTrainConfig, SharedTrainConfig)
+
+    def test_runtime_reuses_shared_parse_args(self):
+        self.assertIs(parse_train_args, parse_config_args)
 
     def test_invalid_train_config_is_rejected_in_both_parsers(self):
         bad_args = ["--config", "configs/train/base.yaml", "--ctx-left", "10"]

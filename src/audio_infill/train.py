@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 import os
-import sys
 import time
 import math
 import random
-import argparse
 import json
 import logging
 from collections import defaultdict, deque
@@ -23,7 +21,22 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from audio_infill.config import validate_train_config as validate_shared_train_config
+from audio_infill.config import TrainConfig, parse_args
+from audio_infill.encodec_utils import (
+    build_encodec_model,
+    codes_to_embeddings,
+    decode_embeddings,
+    load_exported_decoder,
+    logits_to_embeddings,
+)
+from audio_infill.training_common import (
+    log_hparams,
+    load_training_checkpoint,
+    resolve_device,
+    restore_rng_state,
+    save_training_checkpoint,
+    set_seed,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,135 +44,6 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("infiller")
-
-
-@dataclass
-class TrainConfig:
-    config: Optional[str] = None
-    ds_dir: str = "data/processed/single_gap"
-    sample: Optional[str] = None
-    auto_hparam: bool = False
-
-    wav_path: str = "data/interim/gapped_audio.wav"
-    target_sr: int = 24000
-    bandwidth: float = 6.0
-    gap_start_s: float = 200.0
-    gap_end_s: float = 210.0
-
-    d_model: int = 512
-    n_heads: int = 8
-    n_layers: int = 8
-    max_len: int = 2048
-    dropout: float = 0.1
-    boundary_max_distance: int = 128
-
-    seq_len: int = 1024
-    mask_len_min: int = 64
-    mask_len_max: int = 256
-
-    batch_size: int = 16
-    lr: float = 2e-4
-    weight_decay: float = 1e-2
-    betas: Tuple[float, float] = (0.9, 0.95)
-    grad_clip: float = 1.0
-    warmup_steps: int = 200
-    total_steps: int = 3000
-    log_every: int = 100
-    save_every: int = 500
-    test_fill_every: int = 0
-    validation_every: int = 0
-    validation_examples_per_band: int = 64
-    validation_batch_size: Optional[int] = None
-    validation_strategy: str = "random_windows"
-    validation_regions_per_band: int = 1
-    validation_region_len_frames: Optional[int] = None
-    validation_region_min_separation_frames: Optional[int] = None
-    validation_examples_per_length_band: int = 8
-    validation_mask_lengths: Tuple[int, ...] = ()
-    validation_inspection_enabled: bool = False
-    validation_inspection_examples_per_group: int = 1
-    validation_crop_context_frames: Optional[int] = None
-    validation_save_artifacts: bool = True
-    num_workers: int = 2
-
-    output_dir: str = "outputs/runs"
-    run_name: str = "infiller"
-    seed: int = 42
-    device: str = "auto"
-
-    resume: Optional[str] = None
-    inpaint_only: bool = False
-    inpaint_iters: int = 10
-    inpaint_output: Optional[str] = None
-
-    ctx_left: Optional[int] = None
-    ctx_right: Optional[int] = None
-
-    # Curriculum learning
-    curriculum: bool = False
-    curriculum_start_mask: Optional[int] = None  # default: min(mask_len_max, 128)
-    curriculum_end_mask: Optional[int] = None      # default: largest_gap_frames
-    curriculum_warmup_frac: float = 0.1
-    curriculum_schedule: str = "linear"  # "linear" or "cosine"
-
-    activity_smooth_kernel: int = 9
-    activity_low_quantile: float = 0.30
-    activity_high_quantile: float = 0.70
-    weighted_sampling: bool = True
-    dead_window_min_mean: float = 0.01
-    dead_window_min_ratio: float = 0.03
-    regime_active_prob: float = 0.45
-    regime_transition_prob: float = 0.30
-    regime_low_prob: float = 0.15
-    regime_uniform_prob: float = 0.10
-    mask_stride: int = 1
-    activity_guided_masking: bool = True
-
-    use_encoder_decoder: bool = False
-    decoded_loss_enabled: bool = False
-    decoded_loss_weight: float = 0.0
-    decoded_loss_start_step: int = 0
-    decoded_loss_every: int = 1
-    decoded_loss_max_items: int = 1
-    decoded_loss_margin_frames: int = 8
-    decoded_loss_temperature: float = 1.0
-    decoded_loss_waveform_l1_weight: float = 0.0
-    decoded_loss_stft_weight: float = 1.0
-    decoded_loss_spectral_convergence_weight: float = 1.0
-    decoded_loss_log_magnitude_weight: float = 1.0
-    decoded_loss_n_ffts: Tuple[int, ...] = (512, 1024, 2048)
-    decoded_loss_hop_lengths: Tuple[int, ...] = (128, 256, 512)
-    decoded_loss_win_lengths: Tuple[int, ...] = (512, 1024, 2048)
-
-    @property
-    def checkpoint_dir(self) -> Path:
-        return Path(self.output_dir) / self.run_name / "checkpoints"
-
-    @property
-    def tb_dir(self) -> Path:
-        return Path(self.output_dir) / self.run_name / "tb"
-
-    @property
-    def samples_dir(self) -> Path:
-        return Path(self.output_dir) / self.run_name / "samples"
-
-
-def set_seed(seed: int):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-
-def resolve_device(cfg_device: str) -> torch.device:
-    if cfg_device == "auto":
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return torch.device("mps")
-        return torch.device("cpu")
-    return torch.device(cfg_device)
 
 
 def normalize_robust(values: np.ndarray, low_q: float = 0.05, high_q: float = 0.95) -> np.ndarray:
@@ -1030,12 +914,25 @@ def build_holdout_region_validation_examples(
 
 
 class AudioEncoder:
-    def __init__(self, bandwidth: float, device: torch.device):
-        from encodec import EncodecModel
-
+    def __init__(
+        self,
+        bandwidth: float,
+        device: torch.device,
+        *,
+        encodec_model: str = "encodec_24khz",
+        custom_decoder_checkpoint: Optional[str] = None,
+    ):
         self.device = device
-        self.model = EncodecModel.encodec_model_24khz().to(device).eval()
+        self.encodec_model = encodec_model
+        self.model = build_encodec_model(encodec_model).to(device).eval()
         self.model.set_target_bandwidth(bandwidth)
+        if custom_decoder_checkpoint:
+            load_exported_decoder(
+                custom_decoder_checkpoint,
+                decoder=self.model.decoder,
+                expected_encodec_model=encodec_model,
+                expected_bandwidth=bandwidth,
+            )
         self.model.requires_grad_(False)
         self.bins = int(self.model.quantizer.bins)
         self.mask_token = self.bins
@@ -1056,59 +953,13 @@ class AudioEncoder:
         return wav_out.squeeze(0).cpu().squeeze(0).numpy()
 
     def codes_to_embeddings(self, codes: torch.Tensor) -> torch.Tensor:
-        if codes.dim() == 2:
-            codes = codes.unsqueeze(0)
-        if codes.dim() != 3:
-            raise ValueError(f"codes_to_embeddings expects [B,K,T] or [K,T], got shape={tuple(codes.shape)}")
-        codes = codes.to(self.device, dtype=torch.long)
-        quantized_out = None
-        layers = self.model.quantizer.vq.layers
-        if codes.shape[1] > len(layers):
-            raise ValueError(f"codes K={codes.shape[1]} exceeds quantizer layers={len(layers)}")
-        for q in range(codes.shape[1]):
-            quantized = layers[q].decode(codes[:, q, :])
-            quantized_out = quantized if quantized_out is None else quantized_out + quantized
-        assert quantized_out is not None
-        return quantized_out
+        return codes_to_embeddings(self.model, codes, device=self.device)
 
     def logits_to_embeddings(self, logits: torch.Tensor, temperature: float = 1.0) -> torch.Tensor:
-        if logits.dim() != 4:
-            raise ValueError(f"logits_to_embeddings expects [B,K,T,V], got shape={tuple(logits.shape)}")
-        if temperature <= 0:
-            raise ValueError("temperature must be > 0")
-        logits = logits.to(self.device, dtype=torch.float32)
-        probs = torch.softmax(logits / temperature, dim=-1)
-        quantized_out = None
-        layers = self.model.quantizer.vq.layers
-        if logits.shape[1] > len(layers):
-            raise ValueError(f"logits K={logits.shape[1]} exceeds quantizer layers={len(layers)}")
-        for q in range(logits.shape[1]):
-            layer = layers[q]
-            codebook = layer.codebook.to(device=logits.device, dtype=logits.dtype)
-            soft_quantized = torch.matmul(probs[:, q, :, :], codebook)
-            soft_quantized = layer.project_out(soft_quantized)
-            soft_quantized = soft_quantized.transpose(1, 2)
-            quantized_out = soft_quantized if quantized_out is None else quantized_out + soft_quantized
-        assert quantized_out is not None
-        return quantized_out
+        return logits_to_embeddings(self.model, logits, temperature=temperature, device=self.device)
 
     def decode_embeddings(self, embeddings: torch.Tensor, scale: Optional[torch.Tensor] = None) -> torch.Tensor:
-        if embeddings.dim() != 3:
-            raise ValueError(f"decode_embeddings expects [B,D,T], got shape={tuple(embeddings.shape)}")
-        embeddings = embeddings.to(self.device, dtype=torch.float32)
-        decoder = self.model.decoder
-        decoder_was_training = decoder.training
-        if torch.is_grad_enabled():
-            # cuDNN LSTM backward requires the decoder forward to run in training mode,
-            # even though the EnCodec weights themselves stay frozen.
-            decoder.train(True)
-        try:
-            wav_out = decoder(embeddings)
-        finally:
-            decoder.train(decoder_was_training)
-        if scale is not None:
-            wav_out = wav_out * scale.view(-1, 1, 1)
-        return wav_out
+        return decode_embeddings(self.model.decoder, embeddings, device=self.device, scale=scale)
 
 
 class ActivityAwareMaskedSpanDataset(Dataset):
@@ -1737,6 +1588,7 @@ class Trainer:
         cfg.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         cfg.tb_dir.mkdir(parents=True, exist_ok=True)
         cfg.samples_dir.mkdir(parents=True, exist_ok=True)
+        cfg.artifacts_dir.mkdir(parents=True, exist_ok=True)
         self.writer = SummaryWriter(log_dir=str(cfg.tb_dir))
 
         self._log_hparams()
@@ -1756,27 +1608,7 @@ class Trainer:
             self._init_curriculum()
 
     def _log_hparams(self):
-        cfg = self.cfg
-        hparams = {
-            k: v
-            for k, v in vars(cfg).items()
-            if not k.startswith("_") and isinstance(v, (int, float, str, bool, list, tuple))
-        }
-        hparams_safe = {}
-        for k, v in hparams.items():
-            if v is None:
-                continue
-            hparams_safe[k] = json.dumps(v) if isinstance(v, (list, tuple)) else v
-        logger.info("=== Hyperparameters ===")
-        for k, v in sorted(hparams_safe.items()):
-            logger.info("  %-20s = %s", k, v)
-        logger.info("=======================")
-        self.writer.add_text("hparams", "\n".join(f"{k} = {v}" for k, v in sorted(hparams_safe.items())), 0)
-        self.writer.add_hparams(
-            hparams_safe,
-            {"hparam/placeholder": 0.0},
-            run_name=".",
-        )
+        log_hparams(logger, self.writer, self.cfg)
 
     def _resolve_gap_frames(
         self,
@@ -1860,7 +1692,12 @@ class Trainer:
 
     def _load_audio(self):
         cfg = self.cfg
-        self.encoder = AudioEncoder(cfg.bandwidth, self.device)
+        self.encoder = AudioEncoder(
+            cfg.bandwidth,
+            self.device,
+            encodec_model=cfg.encodec_model,
+            custom_decoder_checkpoint=cfg.custom_decoder_checkpoint,
+        )
         sample_data = self._load_audio_sample(
             wav_path=cfg.wav_path,
             target_sr=cfg.target_sr,
@@ -2663,30 +2500,23 @@ class Trainer:
 
     def save_checkpoint(self, tag: str = "latest"):
         path = self.cfg.checkpoint_dir / f"{tag}.pt"
-        rng_state = {
-            "python": random.getstate(),
-            "numpy": np.random.get_state(),
-            "torch_cpu": torch.random.get_rng_state(),
-        }
-        if torch.cuda.is_available():
-            rng_state["torch_cuda"] = torch.cuda.get_rng_state_all()
-        torch.save(
-            {
-                "step": self.global_step,
-                "model": self.model.state_dict(),
-                "optimizer": self.optimizer.state_dict(),
-                "scaler": self.scaler.state_dict(),
+        save_training_checkpoint(
+            path,
+            step=self.global_step,
+            model_key="model",
+            model_state=self.model.state_dict(),
+            optimizer=self.optimizer,
+            scaler=self.scaler,
+            cfg=self.cfg,
+            extra={
                 "best_loss": self.best_loss,
                 "best_val_loss": self.best_val_loss,
-                "config": vars(self.cfg),
-                "rng_state": rng_state,
             },
-            path,
         )
         logger.info("Saved checkpoint: %s (step %d)", path, self.global_step)
 
     def load_checkpoint(self, path: str):
-        ckpt = torch.load(path, map_location=self.device, weights_only=False)
+        ckpt = load_training_checkpoint(path, self.device)
         ckpt_cfg = ckpt.get("config") or {}
         ckpt_use_encoder_decoder = bool(ckpt_cfg.get("use_encoder_decoder", False))
         if ckpt_use_encoder_decoder != bool(self.cfg.use_encoder_decoder):
@@ -2727,18 +2557,7 @@ class Trainer:
         self.global_step = ckpt["step"]
         self.best_loss = ckpt.get("best_loss", float("inf"))
         self.best_val_loss = ckpt.get("best_val_loss", float("inf"))
-        if "rng_state" in ckpt:
-            rng = ckpt["rng_state"]
-            random.setstate(rng["python"])
-            np.random.set_state(rng["numpy"])
-            cpu_rng = rng["torch_cpu"]
-            if not isinstance(cpu_rng, torch.ByteTensor):
-                cpu_rng = cpu_rng.cpu().byte() if hasattr(cpu_rng, 'cpu') else torch.ByteTensor(cpu_rng)
-            torch.random.set_rng_state(cpu_rng)
-            if torch.cuda.is_available() and "torch_cuda" in rng:
-                cuda_states = rng["torch_cuda"]
-                cuda_states = [s.cpu() if s.device.type != 'cpu' else s for s in cuda_states]
-                torch.cuda.set_rng_state_all(cuda_states)
+        restore_rng_state(ckpt.get("rng_state"))
         logger.info("Loaded checkpoint: %s (step %d)", path, self.global_step)
 
     def train(self):
@@ -3040,341 +2859,6 @@ class Trainer:
         wav_path = self.cfg.samples_dir / f"infilled_step_{self.global_step}.wav"
         sf.write(str(wav_path), wav_filled, sr)
         logger.info("Saved reconstructed wav: %s", wav_path)
-
-
-def load_annotation(ds_dir: str, sample: str) -> dict:
-    json_path = Path(ds_dir) / f"{sample}.json"
-    if not json_path.exists():
-        raise FileNotFoundError(f"Annotation not found: {json_path}")
-    with open(json_path) as f:
-        return json.load(f)
-
-
-def load_yaml_config(path: str) -> Dict[str, Any]:
-    try:
-        import yaml
-    except Exception as e:
-        raise RuntimeError(
-            "YAML config requested but PyYAML is not installed. Install with: pip install pyyaml"
-        ) from e
-
-    with open(path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
-    if data is None:
-        return {}
-    if not isinstance(data, dict):
-        raise ValueError(f"Config must be a mapping at top-level: {path}")
-    return data
-
-
-def _set_cfg_field(cfg: TrainConfig, key: str, value: Any, source: str):
-    name = key.replace("-", "_")
-    if not hasattr(cfg, name):
-        logger.warning("Ignoring unknown config key from %s: %s", source, key)
-        return
-    if name in {"betas", "validation_mask_lengths"} and isinstance(value, list):
-        value = tuple(value)
-    setattr(cfg, name, value)
-
-
-def apply_mapping_to_cfg(cfg: TrainConfig, mapping: Dict[str, Any], source: str):
-    for key, value in mapping.items():
-        _set_cfg_field(cfg, key, value, source)
-
-
-def apply_auto_hparams(cfg: TrainConfig, ann: dict):
-    """Apply auto hyperparameters from annotation JSON.
-
-    Supports both old single-gap and new multi-gap annotation formats.
-    """
-    # Load gap timing info
-    if "gaps" in ann:
-        # New multi-gap format: use first gap for gap_start/end_s (backward compat)
-        first_gap = ann["gaps"][0]
-        cfg.gap_start_s = first_gap["gap_start_s"]
-        cfg.gap_end_s = first_gap["gap_end_s"]
-    elif "gap" in ann:
-        # Old format
-        gap = ann["gap"]
-        cfg.gap_start_s = gap["gap_start_s"]
-        cfg.gap_end_s = gap["gap_end_s"]
-
-    cfg.target_sr = ann["sr"]
-
-    rec = ann["recommendations"]["token_based"]
-    if rec is not None:
-        cfg.seq_len = rec["seq_len_frames"]
-        cfg.mask_len_min = rec["mask_len_min_frames"]
-        cfg.mask_len_max = rec["mask_len_max_frames"]
-        cfg.max_len = max(cfg.max_len, rec["max_len_frames_required"])
-
-        if "ctx_left_frames" in rec:
-            cfg.ctx_left = rec["ctx_left_frames"]
-        if "ctx_right_frames" in rec:
-            cfg.ctx_right = rec["ctx_right_frames"]
-
-        # If curriculum and we have largest_gap_frames, set end mask
-        if rec.get("largest_gap_frames") is not None:
-            cfg.curriculum_end_mask = rec["largest_gap_frames"]
-
-    if "encodec_stats_full_audio" in ann:
-        stats = ann["encodec_stats_full_audio"]
-        if stats is not None:
-            cfg.bandwidth = stats["bandwidth_kbps"]
-
-    logger.info(
-        "Auto-hparams applied from annotation: seq_len=%d, mask=[%d,%d], max_len=%d, ctx=%s/%s",
-        cfg.seq_len, cfg.mask_len_min, cfg.mask_len_max, cfg.max_len,
-        cfg.ctx_left, cfg.ctx_right,
-    )
-
-
-def parse_args(argv: Optional[List[str]] = None):
-    parser = argparse.ArgumentParser(description="Audio Infiller Training")
-    cfg = TrainConfig()
-
-    parser.add_argument("--config", type=str, default=None, help="Path to YAML config")
-
-    parser.add_argument("--ds-dir", type=str, default=None, help="Dataset directory containing .wav and .json pairs")
-    parser.add_argument("--sample", type=str, default=None, help="Sample name (stem) within ds-dir, e.g. wav_test_gap_5p000s")
-    parser.add_argument("--auto-hparam", action="store_true", help="Use recommended hparams from the annotation JSON")
-
-    parser.add_argument("--wav-path", type=str, default=None, help="Direct wav path (overrides --ds-dir/--sample)")
-    parser.add_argument("--target-sr", type=int, default=None)
-    parser.add_argument("--bandwidth", type=float, default=None)
-    parser.add_argument("--gap-start-s", type=float, default=None)
-    parser.add_argument("--gap-end-s", type=float, default=None)
-
-    parser.add_argument("--d-model", type=int, default=None)
-    parser.add_argument("--n-heads", type=int, default=None)
-    parser.add_argument("--n-layers", type=int, default=None)
-    parser.add_argument("--max-len", type=int, default=None)
-    parser.add_argument("--dropout", type=float, default=None)
-    parser.add_argument("--boundary-max-distance", type=int, default=None)
-
-    parser.add_argument("--seq-len", type=int, default=None)
-    parser.add_argument("--mask-len-min", type=int, default=None)
-    parser.add_argument("--mask-len-max", type=int, default=None)
-    parser.add_argument("--ctx-left", type=int, default=None)
-    parser.add_argument("--ctx-right", type=int, default=None)
-
-    parser.add_argument("--batch-size", type=int, default=None)
-    parser.add_argument("--lr", type=float, default=None)
-    parser.add_argument("--weight-decay", type=float, default=None)
-    parser.add_argument("--betas", nargs=2, type=float, default=None)
-    parser.add_argument("--grad-clip", type=float, default=None)
-    parser.add_argument("--warmup-steps", type=int, default=None)
-    parser.add_argument("--total-steps", type=int, default=None)
-    parser.add_argument("--log-every", type=int, default=None)
-    parser.add_argument("--save-every", type=int, default=None)
-    parser.add_argument("--test-fill-every", type=int, default=None, help="Run inpaint + log spectrogram every N steps (0=disabled)")
-    parser.add_argument("--validation-every", type=int, default=None, help="Run dual-band validation on held-out windows from the training sample every N steps (0=disabled)")
-    parser.add_argument("--validation-examples-per-band", type=int, default=None, help="Fixed same-sample validation examples per activity band")
-    parser.add_argument("--validation-batch-size", type=int, default=None, help="Validation batch size (default: batch-size)")
-    parser.add_argument("--validation-strategy", choices=["random_windows", "holdout_regions"], default=None)
-    parser.add_argument("--validation-regions-per-band", type=int, default=None)
-    parser.add_argument("--validation-region-len-frames", type=int, default=None)
-    parser.add_argument("--validation-region-min-separation-frames", type=int, default=None)
-    parser.add_argument("--validation-examples-per-length-band", type=int, default=None)
-    parser.add_argument("--validation-mask-lengths", nargs="+", type=int, default=None)
-    parser.add_argument("--validation-inspection-enabled", dest="validation_inspection_enabled", action="store_true")
-    parser.add_argument("--no-validation-inspection-enabled", dest="validation_inspection_enabled", action="store_false")
-    parser.set_defaults(validation_inspection_enabled=None)
-    parser.add_argument("--validation-inspection-examples-per-group", type=int, default=None)
-    parser.add_argument("--validation-crop-context-frames", type=int, default=None)
-    parser.add_argument("--validation-save-artifacts", dest="validation_save_artifacts", action="store_true")
-    parser.add_argument("--no-validation-save-artifacts", dest="validation_save_artifacts", action="store_false")
-    parser.set_defaults(validation_save_artifacts=None)
-    parser.add_argument("--num-workers", type=int, default=None)
-
-    parser.add_argument("--output-dir", type=str, default=None)
-    parser.add_argument("--run-name", type=str, default=None)
-    parser.add_argument("--seed", type=int, default=None)
-    parser.add_argument("--device", type=str, default=None)
-
-    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
-    parser.add_argument("--inpaint-only", action="store_true", help="Skip training, only run inpainting")
-    parser.add_argument("--inpaint-iters", type=int, default=None)
-    parser.add_argument("--inpaint-output", type=str, default=None)
-
-    # Curriculum learning args
-    parser.add_argument("--curriculum", action="store_true", help="Enable curriculum learning (grow mask span)")
-    parser.add_argument("--curriculum-start-mask", type=int, default=None,
-                        help="Initial max mask length (default: min(mask_len_max, 128))")
-    parser.add_argument("--curriculum-end-mask", type=int, default=None,
-                        help="Final max mask length (default: largest_gap_frames)")
-    parser.add_argument("--curriculum-warmup-frac", type=float, default=None,
-                        help="Fraction of total steps for curriculum warmup (default 0.1)")
-    parser.add_argument("--curriculum-schedule", choices=["linear", "cosine"],
-                        default=None,
-                        help="Curriculum interpolation schedule (default: linear)")
-
-    parser.add_argument("--activity-smooth-kernel", type=int, default=None)
-    parser.add_argument("--activity-low-quantile", type=float, default=None)
-    parser.add_argument("--activity-high-quantile", type=float, default=None)
-    parser.add_argument("--weighted-sampling", dest="weighted_sampling", action="store_true")
-    parser.add_argument("--no-weighted-sampling", dest="weighted_sampling", action="store_false")
-    parser.set_defaults(weighted_sampling=None)
-    parser.add_argument("--dead-window-min-mean", type=float, default=None)
-    parser.add_argument("--dead-window-min-ratio", type=float, default=None)
-    parser.add_argument("--regime-active-prob", type=float, default=None)
-    parser.add_argument("--regime-transition-prob", type=float, default=None)
-    parser.add_argument("--regime-low-prob", type=float, default=None)
-    parser.add_argument("--regime-uniform-prob", type=float, default=None)
-    parser.add_argument("--mask-stride", type=int, default=None)
-    parser.add_argument("--activity-guided-masking", dest="activity_guided_masking", action="store_true")
-    parser.add_argument("--no-activity-guided-masking", dest="activity_guided_masking", action="store_false")
-    parser.set_defaults(activity_guided_masking=None)
-
-    parser.add_argument("--use-encoder-decoder", dest="use_encoder_decoder", action="store_true")
-    parser.add_argument("--no-use-encoder-decoder", dest="use_encoder_decoder", action="store_false")
-    parser.set_defaults(use_encoder_decoder=None)
-    parser.add_argument("--decoded-loss-enabled", dest="decoded_loss_enabled", action="store_true")
-    parser.add_argument("--no-decoded-loss-enabled", dest="decoded_loss_enabled", action="store_false")
-    parser.set_defaults(decoded_loss_enabled=None)
-    parser.add_argument("--decoded-loss-weight", type=float, default=None)
-    parser.add_argument("--decoded-loss-start-step", type=int, default=None)
-    parser.add_argument("--decoded-loss-every", type=int, default=None)
-    parser.add_argument("--decoded-loss-max-items", type=int, default=None)
-    parser.add_argument("--decoded-loss-margin-frames", type=int, default=None)
-    parser.add_argument("--decoded-loss-temperature", type=float, default=None)
-    parser.add_argument("--decoded-loss-waveform-l1-weight", type=float, default=None)
-    parser.add_argument("--decoded-loss-stft-weight", type=float, default=None)
-    parser.add_argument("--decoded-loss-spectral-convergence-weight", type=float, default=None)
-    parser.add_argument("--decoded-loss-log-magnitude-weight", type=float, default=None)
-    parser.add_argument("--decoded-loss-n-ffts", nargs="+", type=int, default=None)
-    parser.add_argument("--decoded-loss-hop-lengths", nargs="+", type=int, default=None)
-    parser.add_argument("--decoded-loss-win-lengths", nargs="+", type=int, default=None)
-
-    args = parser.parse_args(argv)
-
-    if args.config:
-        cfg.config = args.config
-        cfg_map = load_yaml_config(args.config)
-        apply_mapping_to_cfg(cfg, cfg_map, args.config)
-
-    cli_overrides = {
-        "ds_dir": args.ds_dir,
-        "sample": args.sample,
-        "wav_path": args.wav_path,
-        "target_sr": args.target_sr,
-        "bandwidth": args.bandwidth,
-        "gap_start_s": args.gap_start_s,
-        "gap_end_s": args.gap_end_s,
-        "d_model": args.d_model,
-        "n_heads": args.n_heads,
-        "n_layers": args.n_layers,
-        "max_len": args.max_len,
-        "dropout": args.dropout,
-        "boundary_max_distance": args.boundary_max_distance,
-        "seq_len": args.seq_len,
-        "mask_len_min": args.mask_len_min,
-        "mask_len_max": args.mask_len_max,
-        "ctx_left": args.ctx_left,
-        "ctx_right": args.ctx_right,
-        "batch_size": args.batch_size,
-        "lr": args.lr,
-        "betas": tuple(args.betas) if args.betas is not None else None,
-        "weight_decay": args.weight_decay,
-        "grad_clip": args.grad_clip,
-        "warmup_steps": args.warmup_steps,
-        "total_steps": args.total_steps,
-        "log_every": args.log_every,
-        "save_every": args.save_every,
-        "test_fill_every": args.test_fill_every,
-        "validation_every": args.validation_every,
-        "validation_examples_per_band": args.validation_examples_per_band,
-        "validation_batch_size": args.validation_batch_size,
-        "validation_strategy": args.validation_strategy,
-        "validation_regions_per_band": args.validation_regions_per_band,
-        "validation_region_len_frames": args.validation_region_len_frames,
-        "validation_region_min_separation_frames": args.validation_region_min_separation_frames,
-        "validation_examples_per_length_band": args.validation_examples_per_length_band,
-        "validation_mask_lengths": tuple(args.validation_mask_lengths) if args.validation_mask_lengths is not None else None,
-        "validation_inspection_enabled": args.validation_inspection_enabled,
-        "validation_inspection_examples_per_group": args.validation_inspection_examples_per_group,
-        "validation_crop_context_frames": args.validation_crop_context_frames,
-        "validation_save_artifacts": args.validation_save_artifacts,
-        "num_workers": args.num_workers,
-        "output_dir": args.output_dir,
-        "run_name": args.run_name,
-        "seed": args.seed,
-        "device": args.device,
-        "resume": args.resume,
-        "inpaint_iters": args.inpaint_iters,
-        "inpaint_output": args.inpaint_output,
-        "curriculum_start_mask": args.curriculum_start_mask,
-        "curriculum_end_mask": args.curriculum_end_mask,
-        "curriculum_warmup_frac": args.curriculum_warmup_frac,
-        "curriculum_schedule": args.curriculum_schedule,
-        "activity_smooth_kernel": args.activity_smooth_kernel,
-        "activity_low_quantile": args.activity_low_quantile,
-        "activity_high_quantile": args.activity_high_quantile,
-        "weighted_sampling": args.weighted_sampling,
-        "dead_window_min_mean": args.dead_window_min_mean,
-        "dead_window_min_ratio": args.dead_window_min_ratio,
-        "regime_active_prob": args.regime_active_prob,
-        "regime_transition_prob": args.regime_transition_prob,
-        "regime_low_prob": args.regime_low_prob,
-        "regime_uniform_prob": args.regime_uniform_prob,
-        "mask_stride": args.mask_stride,
-        "activity_guided_masking": args.activity_guided_masking,
-        "use_encoder_decoder": args.use_encoder_decoder,
-        "decoded_loss_enabled": args.decoded_loss_enabled,
-        "decoded_loss_weight": args.decoded_loss_weight,
-        "decoded_loss_start_step": args.decoded_loss_start_step,
-        "decoded_loss_every": args.decoded_loss_every,
-        "decoded_loss_max_items": args.decoded_loss_max_items,
-        "decoded_loss_margin_frames": args.decoded_loss_margin_frames,
-        "decoded_loss_temperature": args.decoded_loss_temperature,
-        "decoded_loss_waveform_l1_weight": args.decoded_loss_waveform_l1_weight,
-        "decoded_loss_stft_weight": args.decoded_loss_stft_weight,
-        "decoded_loss_spectral_convergence_weight": args.decoded_loss_spectral_convergence_weight,
-        "decoded_loss_log_magnitude_weight": args.decoded_loss_log_magnitude_weight,
-        "decoded_loss_n_ffts": tuple(args.decoded_loss_n_ffts) if args.decoded_loss_n_ffts is not None else None,
-        "decoded_loss_hop_lengths": tuple(args.decoded_loss_hop_lengths) if args.decoded_loss_hop_lengths is not None else None,
-        "decoded_loss_win_lengths": tuple(args.decoded_loss_win_lengths) if args.decoded_loss_win_lengths is not None else None,
-    }
-    for key, value in cli_overrides.items():
-        if value is not None:
-            setattr(cfg, key, value)
-
-    if args.auto_hparam:
-        cfg.auto_hparam = True
-    if args.curriculum:
-        cfg.curriculum = True
-    if args.inpaint_only:
-        cfg.inpaint_only = True
-
-    ann = None
-    if cfg.sample:
-        wav_file = Path(cfg.ds_dir) / f"{cfg.sample}.wav"
-        if not wav_file.exists():
-            parser.error(f"Sample wav not found: {wav_file}")
-        cfg.wav_path = str(wav_file)
-        ann = load_annotation(cfg.ds_dir, cfg.sample)
-
-        # Load gap info (support both old and new format)
-        if "gaps" in ann:
-            first_gap = ann["gaps"][0]
-            cfg.gap_start_s = first_gap["gap_start_s"]
-            cfg.gap_end_s = first_gap["gap_end_s"]
-        elif "gap" in ann:
-            cfg.gap_start_s = ann["gap"]["gap_start_s"]
-            cfg.gap_end_s = ann["gap"]["gap_end_s"]
-
-        cfg.target_sr = ann["sr"]
-        if cfg.auto_hparam:
-            apply_auto_hparams(cfg, ann)
-
-    if cfg.run_name is None:
-        cfg.run_name = cfg.sample if cfg.sample else "infiller"
-
-    # Store annotation for multi-gap loading in Trainer._load_audio
-    cfg._annotation = ann  # type: ignore[attr-defined]
-
-    validate_shared_train_config(cfg)
-    return cfg, args
 
 
 def main():

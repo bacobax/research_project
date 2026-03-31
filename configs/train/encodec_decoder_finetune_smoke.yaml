@@ -1,0 +1,39 @@
+config: configs/train/encodec_decoder_finetune_smoke.yaml
+
+output_dir: outputs/runs_test/encodec_decoder
+run_name: smoketest_decoder_finetune
+seed: 42
+device: auto
+
+wav_path: data/processed/multigap/wav_test_multigap_4x_1p0s_2p0s_5p0s_10p0s.wav
+target_sr: 24000
+
+encodec_model: encodec_24khz
+bandwidth: 6.0
+
+window_seconds: 1.0
+hop_seconds: 0.5
+
+batch_size: 2
+lr: 0.0001
+weight_decay: 0.0
+betas: [0.9, 0.95]
+grad_clip: 1.0
+
+warmup_steps: 0
+total_steps: 20
+
+log_every: 5
+save_every: 10
+validation_every: 10
+validation_save_audio_every: 10
+
+resume: null
+decoder_export_path: null
+
+waveform_l1_weight: 1.0
+waveform_l2_weight: 0.0
+stft_weight: 1.0
+stft_n_ffts: [256, 512]
+stft_hop_lengths: [64, 128]
+stft_win_lengths: [256, 512]

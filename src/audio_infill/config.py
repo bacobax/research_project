@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from audio_infill.encodec_utils import SUPPORTED_ENCODEC_MODELS
+from audio_infill.training_common import build_run_paths
+
 
 @dataclass
 class TrainConfig:
@@ -16,6 +19,8 @@ class TrainConfig:
     wav_path: str = "data/interim/gapped_audio.wav"
     target_sr: int = 24000
     bandwidth: float = 6.0
+    encodec_model: str = "encodec_24khz"
+    custom_decoder_checkpoint: Optional[str] = None
     gap_start_s: float = 200.0
     gap_end_s: float = 210.0
 
@@ -103,8 +108,28 @@ class TrainConfig:
     decoded_loss_hop_lengths: Tuple[int, ...] = (128, 256, 512)
     decoded_loss_win_lengths: Tuple[int, ...] = (512, 1024, 2048)
 
+    @property
+    def checkpoint_dir(self) -> Path:
+        return build_run_paths(self.output_dir, self.run_name).checkpoint_dir
+
+    @property
+    def tb_dir(self) -> Path:
+        return build_run_paths(self.output_dir, self.run_name).tb_dir
+
+    @property
+    def samples_dir(self) -> Path:
+        return build_run_paths(self.output_dir, self.run_name).samples_dir
+
+    @property
+    def artifacts_dir(self) -> Path:
+        return build_run_paths(self.output_dir, self.run_name).artifacts_dir
+
 
 def validate_train_config(cfg: TrainConfig):
+    if cfg.encodec_model not in SUPPORTED_ENCODEC_MODELS:
+        raise ValueError(
+            f"encodec_model must be one of {sorted(SUPPORTED_ENCODEC_MODELS)}, got {cfg.encodec_model!r}"
+        )
     if cfg.seq_len <= 0:
         raise ValueError("seq_len must be > 0")
     if cfg.mask_len_min <= 0 or cfg.mask_len_max <= 0:
@@ -307,6 +332,8 @@ def parse_args(argv: Optional[List[str]] = None):
     parser.add_argument("--wav-path", type=str, default=None)
     parser.add_argument("--target-sr", type=int, default=None)
     parser.add_argument("--bandwidth", type=float, default=None)
+    parser.add_argument("--encodec-model", type=str, default=None)
+    parser.add_argument("--custom-decoder-checkpoint", type=str, default=None)
     parser.add_argument("--gap-start-s", type=float, default=None)
     parser.add_argument("--gap-end-s", type=float, default=None)
 
@@ -423,6 +450,8 @@ def parse_args(argv: Optional[List[str]] = None):
         "wav_path": args.wav_path,
         "target_sr": args.target_sr,
         "bandwidth": args.bandwidth,
+        "encodec_model": args.encodec_model,
+        "custom_decoder_checkpoint": args.custom_decoder_checkpoint,
         "gap_start_s": args.gap_start_s,
         "gap_end_s": args.gap_end_s,
         "d_model": args.d_model,

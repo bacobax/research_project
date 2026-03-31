@@ -21,6 +21,8 @@ class TestConfigParsing(unittest.TestCase):
         self.assertEqual(cfg.activity_smooth_kernel, 9)
         self.assertAlmostEqual(cfg.activity_low_quantile, 0.30)
         self.assertAlmostEqual(cfg.activity_high_quantile, 0.70)
+        self.assertEqual(cfg.encodec_model, "encodec_24khz")
+        self.assertIsNone(cfg.custom_decoder_checkpoint)
         self.assertTrue(cfg.weighted_sampling)
         self.assertTrue(cfg.activity_guided_masking)
         self.assertFalse(cfg.use_encoder_decoder)
@@ -35,6 +37,10 @@ class TestConfigParsing(unittest.TestCase):
             "cpu",
             "--boundary-max-distance",
             "64",
+            "--encodec-model",
+            "encodec_24khz",
+            "--custom-decoder-checkpoint",
+            "outputs/runs/encodec_decoder/demo/artifacts/decoder.pt",
             "--no-weighted-sampling",
             "--no-activity-guided-masking",
             "--use-encoder-decoder",
@@ -42,6 +48,8 @@ class TestConfigParsing(unittest.TestCase):
         self.assertEqual(cfg.total_steps, 123)
         self.assertEqual(cfg.device, "cpu")
         self.assertEqual(cfg.boundary_max_distance, 64)
+        self.assertEqual(cfg.encodec_model, "encodec_24khz")
+        self.assertEqual(cfg.custom_decoder_checkpoint, "outputs/runs/encodec_decoder/demo/artifacts/decoder.pt")
         self.assertFalse(cfg.weighted_sampling)
         self.assertFalse(cfg.activity_guided_masking)
         self.assertTrue(cfg.use_encoder_decoder)
