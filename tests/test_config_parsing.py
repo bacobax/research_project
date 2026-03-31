@@ -23,6 +23,7 @@ class TestConfigParsing(unittest.TestCase):
         self.assertAlmostEqual(cfg.activity_high_quantile, 0.70)
         self.assertTrue(cfg.weighted_sampling)
         self.assertTrue(cfg.activity_guided_masking)
+        self.assertFalse(cfg.use_encoder_decoder)
 
     def test_cli_override_still_works(self):
         cfg, _ = parse_args([
@@ -36,12 +37,14 @@ class TestConfigParsing(unittest.TestCase):
             "64",
             "--no-weighted-sampling",
             "--no-activity-guided-masking",
+            "--use-encoder-decoder",
         ])
         self.assertEqual(cfg.total_steps, 123)
         self.assertEqual(cfg.device, "cpu")
         self.assertEqual(cfg.boundary_max_distance, 64)
         self.assertFalse(cfg.weighted_sampling)
         self.assertFalse(cfg.activity_guided_masking)
+        self.assertTrue(cfg.use_encoder_decoder)
 
 
 if __name__ == "__main__":

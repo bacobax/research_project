@@ -115,6 +115,7 @@ class TrainConfig:
     mask_stride: int = 1
     activity_guided_masking: bool = True
 
+    use_encoder_decoder: bool = False
     decoded_loss_enabled: bool = False
     decoded_loss_weight: float = 0.0
     decoded_loss_start_step: int = 0
@@ -449,12 +450,7 @@ def frame_bounds_to_sample_bounds(
     return start_sample, end_sample
 
 
-def build_boundary_condition_tensors(
-    loss_mask: torch.Tensor,
-    max_distance: int,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    if max_distance <= 0:
-        raise ValueError("max_distance must be > 0")
+def extract_contiguous_mask_bounds(loss_mask: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     if loss_mask.dim() == 1:
         loss_mask = loss_mask.unsqueeze(0)
     if loss_mask.dim() != 2:
@@ -465,7 +461,7 @@ def build_boundary_condition_tensors(
     if steps <= 0:
         raise ValueError("loss_mask must have at least one timestep")
     if not torch.all(mask.any(dim=1)):
-        raise ValueError("Each boundary-conditioned example must contain at least one masked timestep")
+        raise ValueError("Each example must contain at least one masked timestep")
 
     first_mask = mask.float().argmax(dim=1)
     last_mask_from_end = torch.flip(mask, dims=[1]).float().argmax(dim=1)
@@ -474,7 +470,32 @@ def build_boundary_condition_tensors(
     positions = torch.arange(steps, device=mask.device, dtype=torch.long).unsqueeze(0).expand(batch, -1)
     gap_mask = (positions >= first_mask.unsqueeze(1)) & (positions < gap_end.unsqueeze(1))
     if not torch.equal(gap_mask, mask):
-        raise ValueError("Boundary conditioning requires exactly one contiguous masked span per example")
+        raise ValueError("Expected exactly one contiguous masked span per example")
+    return first_mask.long(), gap_end.long()
+
+
+def extract_contiguous_mask_bounds_from_segment_ids(segment_ids: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    if segment_ids.dim() == 1:
+        segment_ids = segment_ids.unsqueeze(0)
+    if segment_ids.dim() != 2:
+        raise ValueError(f"segment_ids must have shape [T] or [B,T], got {tuple(segment_ids.shape)}")
+    return extract_contiguous_mask_bounds(segment_ids == 1)
+
+
+def build_boundary_condition_tensors(
+    loss_mask: torch.Tensor,
+    max_distance: int,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if max_distance <= 0:
+        raise ValueError("max_distance must be > 0")
+    if loss_mask.dim() == 1:
+        loss_mask = loss_mask.unsqueeze(0)
+    mask = loss_mask.bool()
+    batch, steps = mask.shape
+    first_mask, gap_end = extract_contiguous_mask_bounds(mask)
+
+    positions = torch.arange(steps, device=mask.device, dtype=torch.long).unsqueeze(0).expand(batch, -1)
+    gap_mask = (positions >= first_mask.unsqueeze(1)) & (positions < gap_end.unsqueeze(1))
 
     segment_ids = torch.zeros((batch, steps), device=mask.device, dtype=torch.long)
     segment_ids = torch.where(positions >= gap_end.unsqueeze(1), torch.full_like(segment_ids, 2), segment_ids)
@@ -1385,7 +1406,7 @@ class ActivityAwareMaskedSpanDataset(Dataset):
 MaskedSpanDataset = ActivityAwareMaskedSpanDataset
 
 
-class JointCodebookInfiller(nn.Module):
+class _CodebookInfillerBase(nn.Module):
     def __init__(
         self,
         K: int,
@@ -1410,6 +1431,54 @@ class JointCodebookInfiller(nn.Module):
         self.segment_emb = nn.Embedding(3, d_model)
         self.left_distance_emb = nn.Embedding(2 * self.boundary_max_distance + 1, d_model)
         self.right_distance_emb = nn.Embedding(2 * self.boundary_max_distance + 1, d_model)
+        self.head = nn.ModuleList([nn.Linear(d_model, bins) for _ in range(K)])
+        self.dropout = nn.Dropout(dropout)
+        self.d_model = int(d_model)
+
+    def _embed_tokens(
+        self,
+        x: torch.Tensor,
+        positions: torch.Tensor,
+        segment_ids: torch.Tensor,
+        left_dist_idx: torch.Tensor,
+        right_dist_idx: torch.Tensor,
+    ) -> torch.Tensor:
+        h = self.pos(positions)
+        for k in range(self.K):
+            h = h + self.emb[k](x[:, k, :])
+        h = h + self.segment_emb(segment_ids)
+        h = h + self.left_distance_emb(left_dist_idx)
+        h = h + self.right_distance_emb(right_dist_idx)
+        return self.dropout(h)
+
+    def _project_logits(self, h: torch.Tensor) -> torch.Tensor:
+        return torch.stack([self.head[k](h) for k in range(self.K)], dim=1)
+
+
+class JointCodebookInfiller(_CodebookInfillerBase):
+    def __init__(
+        self,
+        K: int,
+        bins: int,
+        mask_token: int,
+        d_model: int = 512,
+        n_heads: int = 8,
+        n_layers: int = 8,
+        max_len: int = 2048,
+        dropout: float = 0.1,
+        boundary_max_distance: int = 128,
+    ):
+        super().__init__(
+            K=K,
+            bins=bins,
+            mask_token=mask_token,
+            d_model=d_model,
+            n_heads=n_heads,
+            n_layers=n_layers,
+            max_len=max_len,
+            dropout=dropout,
+            boundary_max_distance=boundary_max_distance,
+        )
 
         enc_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
@@ -1421,7 +1490,6 @@ class JointCodebookInfiller(nn.Module):
             norm_first=True,
         )
         self.enc = nn.TransformerEncoder(enc_layer, num_layers=n_layers)
-        self.head = nn.ModuleList([nn.Linear(d_model, bins) for _ in range(K)])
 
     def forward(
         self,
@@ -1441,15 +1509,156 @@ class JointCodebookInfiller(nn.Module):
         left_dist_idx = left_dist_idx.to(device=x.device, dtype=torch.long)
         right_dist_idx = right_dist_idx.to(device=x.device, dtype=torch.long)
         pos = torch.arange(T, device=x.device).unsqueeze(0).expand(B, T)
-        h = self.pos(pos)
-        for k in range(K):
-            h = h + self.emb[k](x[:, k, :])
-        h = h + self.segment_emb(segment_ids)
-        h = h + self.left_distance_emb(left_dist_idx)
-        h = h + self.right_distance_emb(right_dist_idx)
+        h = self._embed_tokens(x, pos, segment_ids, left_dist_idx, right_dist_idx)
         h = self.enc(h)
-        logits = torch.stack([self.head[k](h) for k in range(K)], dim=1)
-        return logits
+        return self._project_logits(h)
+
+
+class EncoderDecoderCodebookInfiller(_CodebookInfillerBase):
+    def __init__(
+        self,
+        K: int,
+        bins: int,
+        mask_token: int,
+        d_model: int = 512,
+        n_heads: int = 8,
+        n_layers: int = 8,
+        max_len: int = 2048,
+        dropout: float = 0.1,
+        boundary_max_distance: int = 128,
+    ):
+        super().__init__(
+            K=K,
+            bins=bins,
+            mask_token=mask_token,
+            d_model=d_model,
+            n_heads=n_heads,
+            n_layers=n_layers,
+            max_len=max_len,
+            dropout=dropout,
+            boundary_max_distance=boundary_max_distance,
+        )
+        enc_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=n_heads,
+            dim_feedforward=4 * d_model,
+            dropout=dropout,
+            batch_first=True,
+            activation="gelu",
+            norm_first=True,
+        )
+        dec_layer = nn.TransformerDecoderLayer(
+            d_model=d_model,
+            nhead=n_heads,
+            dim_feedforward=4 * d_model,
+            dropout=dropout,
+            batch_first=True,
+            activation="gelu",
+            norm_first=True,
+        )
+        self.enc = nn.TransformerEncoder(enc_layer, num_layers=n_layers)
+        self.dec = nn.TransformerDecoder(dec_layer, num_layers=n_layers)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        segment_ids: Optional[torch.Tensor] = None,
+        left_dist_idx: Optional[torch.Tensor] = None,
+        right_dist_idx: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        B, K, T = x.shape
+        if segment_ids is None or left_dist_idx is None or right_dist_idx is None:
+            segment_ids, left_dist_idx, right_dist_idx = build_boundary_condition_tensors_from_mask_token(
+                x,
+                mask_token=self.mask_token,
+                max_distance=self.boundary_max_distance,
+            )
+        segment_ids = segment_ids.to(device=x.device, dtype=torch.long)
+        left_dist_idx = left_dist_idx.to(device=x.device, dtype=torch.long)
+        right_dist_idx = right_dist_idx.to(device=x.device, dtype=torch.long)
+        gap_start, gap_end = extract_contiguous_mask_bounds_from_segment_ids(segment_ids)
+        full_positions = torch.arange(T, device=x.device, dtype=torch.long).unsqueeze(0).expand(B, T)
+
+        context_lengths = T - (gap_end - gap_start)
+        gap_lengths = gap_end - gap_start
+        max_ctx = int(context_lengths.max().item())
+        max_gap = int(gap_lengths.max().item())
+        if max_ctx <= 0 or max_gap <= 0:
+            raise ValueError("Encoder-decoder model requires at least one context token and one gap token")
+
+        ctx_tokens = x.new_zeros((B, K, max_ctx))
+        ctx_positions = full_positions.new_zeros((B, max_ctx))
+        ctx_segment_ids = segment_ids.new_zeros((B, max_ctx))
+        ctx_left_idx = left_dist_idx.new_zeros((B, max_ctx))
+        ctx_right_idx = right_dist_idx.new_zeros((B, max_ctx))
+        ctx_padding_mask = torch.ones((B, max_ctx), device=x.device, dtype=torch.bool)
+
+        gap_tokens = x.new_full((B, K, max_gap), self.mask_token)
+        gap_positions = full_positions.new_zeros((B, max_gap))
+        gap_segment_ids = segment_ids.new_ones((B, max_gap))
+        gap_left_idx = left_dist_idx.new_zeros((B, max_gap))
+        gap_right_idx = right_dist_idx.new_zeros((B, max_gap))
+        gap_padding_mask = torch.ones((B, max_gap), device=x.device, dtype=torch.bool)
+        gap_indices = full_positions.new_zeros((B, max_gap))
+
+        for b in range(B):
+            s = int(gap_start[b].item())
+            e = int(gap_end[b].item())
+            left_len = s
+            right_len = T - e
+            ctx_len = left_len + right_len
+            gap_len = e - s
+
+            if left_len > 0:
+                ctx_tokens[b, :, :left_len] = x[b, :, :s]
+                ctx_positions[b, :left_len] = full_positions[b, :s]
+                ctx_segment_ids[b, :left_len] = segment_ids[b, :s]
+                ctx_left_idx[b, :left_len] = left_dist_idx[b, :s]
+                ctx_right_idx[b, :left_len] = right_dist_idx[b, :s]
+            if right_len > 0:
+                ctx_tokens[b, :, left_len:ctx_len] = x[b, :, e:]
+                ctx_positions[b, left_len:ctx_len] = full_positions[b, e:]
+                ctx_segment_ids[b, left_len:ctx_len] = segment_ids[b, e:]
+                ctx_left_idx[b, left_len:ctx_len] = left_dist_idx[b, e:]
+                ctx_right_idx[b, left_len:ctx_len] = right_dist_idx[b, e:]
+            ctx_padding_mask[b, :ctx_len] = False
+
+            gap_positions[b, :gap_len] = full_positions[b, s:e]
+            gap_segment_ids[b, :gap_len] = segment_ids[b, s:e]
+            gap_left_idx[b, :gap_len] = left_dist_idx[b, s:e]
+            gap_right_idx[b, :gap_len] = right_dist_idx[b, s:e]
+            gap_padding_mask[b, :gap_len] = False
+            gap_indices[b, :gap_len] = torch.arange(s, e, device=x.device, dtype=torch.long)
+
+        memory = self._embed_tokens(
+            ctx_tokens,
+            ctx_positions,
+            ctx_segment_ids,
+            ctx_left_idx,
+            ctx_right_idx,
+        )
+        memory = self.enc(memory, src_key_padding_mask=ctx_padding_mask)
+
+        tgt = self._embed_tokens(
+            gap_tokens,
+            gap_positions,
+            gap_segment_ids,
+            gap_left_idx,
+            gap_right_idx,
+        )
+        decoded = self.dec(
+            tgt=tgt,
+            memory=memory,
+            tgt_key_padding_mask=gap_padding_mask,
+            memory_key_padding_mask=ctx_padding_mask,
+        )
+        gap_logits = self._project_logits(decoded)
+
+        full_logits = gap_logits.new_zeros((B, K, T, self.bins))
+        for b in range(B):
+            gap_len = int(gap_lengths[b].item())
+            full_logits[b, :, gap_indices[b, :gap_len], :] = gap_logits[b, :, :gap_len, :]
+        return full_logits
 
 
 class MultiResolutionSTFTLoss(nn.Module):
@@ -1838,7 +2047,8 @@ class Trainer:
 
     def _build_model(self):
         cfg = self.cfg
-        self.model = JointCodebookInfiller(
+        model_cls = EncoderDecoderCodebookInfiller if cfg.use_encoder_decoder else JointCodebookInfiller
+        self.model = model_cls(
             K=self.K,
             bins=self.bins,
             mask_token=self.mask_token,
@@ -1853,6 +2063,7 @@ class Trainer:
         n_params = sum(p.numel() for p in self.model.parameters())
         logger.info("Model params: %.2fM", n_params / 1e6)
         self.writer.add_scalar("model/params_M", n_params / 1e6, 0)
+        self.writer.add_scalar("model/use_encoder_decoder", float(cfg.use_encoder_decoder), 0)
 
     def _build_model_boundary_tensors(
         self,
@@ -1891,7 +2102,7 @@ class Trainer:
             log_magnitude_weight=cfg.decoded_loss_log_magnitude_weight,
         )
         logger.info(
-            "Decoded-domain loss enabled: weight=%.4f every=%d start=%d max_items=%d margin_frames=%d temperature=%.3f",
+            "Decoded-domain loss enabled (hard argmax path): weight=%.4f every=%d start=%d max_items=%d margin_frames=%d temperature=%.3f (parsed, unused)",
             cfg.decoded_loss_weight,
             cfg.decoded_loss_every,
             cfg.decoded_loss_start_step,
@@ -1981,6 +2192,7 @@ class Trainer:
 
     def _compute_decoded_domain_loss(
         self,
+        x: torch.Tensor,
         logits: torch.Tensor,
         y: torch.Tensor,
         loss_mask: torch.Tensor,
@@ -1998,6 +2210,7 @@ class Trainer:
 
         cfg = self.cfg
         logits_f = logits.float()
+        pred_tokens = logits.argmax(dim=-1)
         if loss_mask.dim() == 1:
             mask_bt = loss_mask.unsqueeze(0).expand(logits.shape[0], -1)
         else:
@@ -2027,22 +2240,32 @@ class Trainer:
         with torch.autocast(device_type=self.device.type, enabled=False):
             for b_idx in selected.tolist():
                 sample_mask = mask_bt[b_idx]
-                mask_positions = torch.nonzero(sample_mask, as_tuple=False).flatten()
-                start_t = max(0, int(mask_positions[0].item()) - cfg.decoded_loss_margin_frames)
-                end_t = min(int(sample_mask.shape[0]), int(mask_positions[-1].item()) + 1 + cfg.decoded_loss_margin_frames)
+                gap_start, gap_end = extract_contiguous_mask_bounds(sample_mask)
+                gap_start_t = int(gap_start[0].item())
+                gap_end_t = int(gap_end[0].item())
+                start_t = max(0, gap_start_t - cfg.decoded_loss_margin_frames)
+                end_t = min(int(sample_mask.shape[0]), gap_end_t + cfg.decoded_loss_margin_frames)
 
                 target_codes = y[b_idx : b_idx + 1, :, start_t:end_t]
-                target_mask = sample_mask[start_t:end_t].unsqueeze(0)
+                pred_codes = x[b_idx : b_idx + 1, :, start_t:end_t].clone()
+                local_gap_start = gap_start_t - start_t
+                local_gap_end = gap_end_t - start_t
+                pred_codes[:, :, local_gap_start:local_gap_end] = pred_tokens[
+                    b_idx : b_idx + 1,
+                    :,
+                    gap_start_t:gap_end_t,
+                ]
                 logits_slice = logits_f[b_idx : b_idx + 1, :, start_t:end_t, :]
+                logits_gap = logits_f[b_idx : b_idx + 1, :, gap_start_t:gap_end_t, :]
 
                 with torch.no_grad():
                     target_embeddings = self.encoder.codes_to_embeddings(target_codes).detach()
-                soft_embeddings = self.encoder.logits_to_embeddings(
-                    logits_slice,
-                    temperature=cfg.decoded_loss_temperature,
-                )
-                mask_f = target_mask.unsqueeze(1).to(device=soft_embeddings.device, dtype=soft_embeddings.dtype)
-                pred_embeddings = target_embeddings.to(dtype=soft_embeddings.dtype) * (1.0 - mask_f) + soft_embeddings * mask_f
+                    hard_embeddings = self.encoder.codes_to_embeddings(pred_codes).detach()
+                soft_gap_embeddings = self.encoder.logits_to_embeddings(logits_gap)
+                hard_gap_embeddings = hard_embeddings[:, :, local_gap_start:local_gap_end]
+                st_gap_embeddings = soft_gap_embeddings + (hard_gap_embeddings - soft_gap_embeddings).detach()
+                pred_embeddings = target_embeddings.to(dtype=logits_f.dtype).clone()
+                pred_embeddings[:, :, local_gap_start:local_gap_end] = st_gap_embeddings
 
                 pred_audio = self.encoder.decode_embeddings(pred_embeddings).squeeze(1)
                 with torch.no_grad():
@@ -2076,6 +2299,7 @@ class Trainer:
 
     def _compute_training_losses(
         self,
+        x: torch.Tensor,
         logits: torch.Tensor,
         y: torch.Tensor,
         loss_mask: torch.Tensor,
@@ -2092,7 +2316,7 @@ class Trainer:
             "decoded_loss_items": 0.0,
         }
         if self._should_apply_decoded_loss(step):
-            decoded_loss, decoded_metrics = self._compute_decoded_domain_loss(logits, y, loss_mask)
+            decoded_loss, decoded_metrics = self._compute_decoded_domain_loss(x, logits, y, loss_mask)
         total_loss = token_loss + decoded_loss
         return total_loss, token_loss, decoded_metrics
 
@@ -2463,6 +2687,13 @@ class Trainer:
 
     def load_checkpoint(self, path: str):
         ckpt = torch.load(path, map_location=self.device, weights_only=False)
+        ckpt_cfg = ckpt.get("config") or {}
+        ckpt_use_encoder_decoder = bool(ckpt_cfg.get("use_encoder_decoder", False))
+        if ckpt_use_encoder_decoder != bool(self.cfg.use_encoder_decoder):
+            raise ValueError(
+                "Checkpoint architecture mismatch: checkpoint use_encoder_decoder="
+                f"{ckpt_use_encoder_decoder}, current config use_encoder_decoder={self.cfg.use_encoder_decoder}"
+            )
         model_state = ckpt["model"]
         boundary_compat_mode = False
         try:
@@ -2557,6 +2788,7 @@ class Trainer:
             with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=use_amp):
                 logits = self.model(x, seg_ids, left_idx, right_idx)
                 total_loss, token_loss, decoded_metrics = self._compute_training_losses(
+                    x,
                     logits,
                     y,
                     loss_mask,
@@ -2741,9 +2973,12 @@ class Trainer:
             x = codes_filled[:, L:R].clone()
             x[:, local_g0:local_g1] = self.mask_token
             xb = x.unsqueeze(0).to(self.device)
+            local_loss_mask = torch.zeros((1, R - L), device=self.device, dtype=torch.bool)
+            local_loss_mask[:, local_g0:local_g1] = True
+            seg_ids, left_idx, right_idx = self._build_model_boundary_tensors(local_loss_mask)
 
             for it in range(cfg.inpaint_iters):
-                logits = self.model(xb)[0]
+                logits = self.model(xb, seg_ids, left_idx, right_idx)[0]
                 pred = logits.argmax(dim=-1)
                 xb[0, :, local_g0:local_g1] = pred[:, local_g0:local_g1]
 
@@ -2991,6 +3226,9 @@ def parse_args(argv: Optional[List[str]] = None):
     parser.add_argument("--no-activity-guided-masking", dest="activity_guided_masking", action="store_false")
     parser.set_defaults(activity_guided_masking=None)
 
+    parser.add_argument("--use-encoder-decoder", dest="use_encoder_decoder", action="store_true")
+    parser.add_argument("--no-use-encoder-decoder", dest="use_encoder_decoder", action="store_false")
+    parser.set_defaults(use_encoder_decoder=None)
     parser.add_argument("--decoded-loss-enabled", dest="decoded_loss_enabled", action="store_true")
     parser.add_argument("--no-decoded-loss-enabled", dest="decoded_loss_enabled", action="store_false")
     parser.set_defaults(decoded_loss_enabled=None)
@@ -3081,6 +3319,7 @@ def parse_args(argv: Optional[List[str]] = None):
         "regime_uniform_prob": args.regime_uniform_prob,
         "mask_stride": args.mask_stride,
         "activity_guided_masking": args.activity_guided_masking,
+        "use_encoder_decoder": args.use_encoder_decoder,
         "decoded_loss_enabled": args.decoded_loss_enabled,
         "decoded_loss_weight": args.decoded_loss_weight,
         "decoded_loss_start_step": args.decoded_loss_start_step,

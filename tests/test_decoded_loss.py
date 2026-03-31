@@ -39,6 +39,40 @@ class TestDecodedLossConfig(unittest.TestCase):
 
 
 class TestDecodedLossWiring(unittest.TestCase):
+    class FakeSTFTLoss:
+        def __call__(self, pred, target):
+            zero = (pred - target).sum() * 0.0
+            return {
+                "total": zero,
+                "spectral_convergence": zero,
+                "log_magnitude": zero,
+            }
+
+    class FakeHardLossEncoder:
+        def __init__(self):
+            self.device = torch.device("cpu")
+            self.logged_pred_embeddings = None
+            self.logged_target_embeddings = None
+
+        def codes_to_embeddings(self, codes: torch.Tensor) -> torch.Tensor:
+            codes = codes.to(torch.float32)
+            q0 = codes[:, 0, :]
+            q1 = codes[:, 1, :]
+            return torch.stack([q0 + 0.5 * q1], dim=1)
+
+        def logits_to_embeddings(self, logits: torch.Tensor, temperature: float = 1.0) -> torch.Tensor:
+            weights = torch.arange(logits.shape[-1], dtype=logits.dtype, device=logits.device)
+            probs = torch.softmax(logits, dim=-1)
+            per_code = (probs * weights).sum(dim=-1)
+            return per_code[:, 0:1, :] + 0.5 * per_code[:, 1:2, :]
+
+        def decode_embeddings(self, embeddings: torch.Tensor, scale=None) -> torch.Tensor:
+            if self.logged_pred_embeddings is None:
+                self.logged_pred_embeddings = embeddings.detach().clone()
+            else:
+                self.logged_target_embeddings = embeddings.detach().clone()
+            return embeddings
+
     def test_decode_embeddings_temporarily_enables_decoder_training_mode(self):
         class FakeDecoder(nn.Module):
             def __init__(self):
@@ -91,6 +125,7 @@ class TestDecodedLossWiring(unittest.TestCase):
         total, token, metrics = trainer._compute_training_losses(
             torch.zeros(1),
             torch.zeros(1),
+            torch.zeros(1),
             torch.zeros(1, dtype=torch.bool),
             step=0,
         )
@@ -108,7 +143,7 @@ class TestDecodedLossWiring(unittest.TestCase):
         )
         trainer.decoded_loss_enabled = True
         trainer._compute_loss = lambda logits, y, loss_mask: torch.tensor(2.0)
-        trainer._compute_decoded_domain_loss = lambda logits, y, loss_mask: (
+        trainer._compute_decoded_domain_loss = lambda x, logits, y, loss_mask: (
             torch.tensor(0.5),
             {
                 "decoded_loss_total": 0.5,
@@ -123,12 +158,84 @@ class TestDecodedLossWiring(unittest.TestCase):
         total, token, metrics = trainer._compute_training_losses(
             torch.zeros(1),
             torch.zeros(1),
+            torch.zeros(1),
             torch.zeros(1, dtype=torch.bool),
             step=0,
         )
         self.assertAlmostEqual(total.item(), 2.5)
         self.assertAlmostEqual(token.item(), 2.0)
         self.assertAlmostEqual(metrics["decoded_loss_total"], 0.5)
+
+    def test_hard_decoded_loss_uses_argmax_tokens_in_forward_path(self):
+        trainer = Trainer.__new__(Trainer)
+        trainer.cfg = TrainConfig(
+            decoded_loss_enabled=True,
+            decoded_loss_weight=1.0,
+            decoded_loss_waveform_l1_weight=1.0,
+            decoded_loss_stft_weight=0.0,
+            decoded_loss_margin_frames=0,
+            decoded_loss_max_items=1,
+        )
+        trainer.device = torch.device("cpu")
+        trainer.decoded_loss_enabled = True
+        trainer.decoded_stft_loss = self.FakeSTFTLoss()
+        trainer.encoder = self.FakeHardLossEncoder()
+
+        x = torch.tensor([[[0, 5, 5, 3], [0, 5, 5, 1]]], dtype=torch.long)
+        y = torch.tensor([[[0, 1, 2, 3], [0, 0, 1, 1]]], dtype=torch.long)
+        loss_mask = torch.tensor([[False, True, True, False]])
+        logits = torch.tensor(
+            [
+                [
+                    [[8.0, 0.0, 0.0], [0.0, 1.0, 3.0], [0.0, 4.0, 1.0], [0.0, 0.0, 7.0]],
+                    [[9.0, 0.0, 0.0], [0.0, 2.0, 1.0], [0.0, 1.0, 5.0], [0.0, 6.0, 0.0]],
+                ]
+            ],
+            dtype=torch.float32,
+        )
+
+        loss, metrics = trainer._compute_decoded_domain_loss(x, logits, y, loss_mask)
+
+        self.assertGreater(float(loss.item()), 0.0)
+        self.assertEqual(metrics["decoded_loss_items"], 1.0)
+        pred_embeddings = trainer.encoder.logged_pred_embeddings
+        self.assertIsNotNone(pred_embeddings)
+        self.assertAlmostEqual(float(pred_embeddings[0, 0, 0].item()), 2.5)
+        self.assertAlmostEqual(float(pred_embeddings[0, 0, 1].item()), 2.0)
+
+    def test_hard_decoded_loss_stays_differentiable_via_straight_through(self):
+        trainer = Trainer.__new__(Trainer)
+        trainer.cfg = TrainConfig(
+            decoded_loss_enabled=True,
+            decoded_loss_weight=1.0,
+            decoded_loss_waveform_l1_weight=1.0,
+            decoded_loss_stft_weight=0.0,
+            decoded_loss_margin_frames=0,
+            decoded_loss_max_items=1,
+        )
+        trainer.device = torch.device("cpu")
+        trainer.decoded_loss_enabled = True
+        trainer.decoded_stft_loss = self.FakeSTFTLoss()
+        trainer.encoder = self.FakeHardLossEncoder()
+
+        x = torch.tensor([[[0, 5, 5, 3], [0, 5, 5, 1]]], dtype=torch.long)
+        y = torch.tensor([[[0, 1, 2, 3], [0, 0, 1, 1]]], dtype=torch.long)
+        loss_mask = torch.tensor([[False, True, True, False]])
+        logits = torch.tensor(
+            [
+                [
+                    [[8.0, 0.0, 0.0], [0.0, 1.0, 3.0], [0.0, 4.0, 1.0], [0.0, 0.0, 7.0]],
+                    [[9.0, 0.0, 0.0], [0.0, 2.0, 1.0], [0.0, 1.0, 5.0], [0.0, 6.0, 0.0]],
+                ]
+            ],
+            dtype=torch.float32,
+            requires_grad=True,
+        )
+
+        loss, _ = trainer._compute_decoded_domain_loss(x, logits, y, loss_mask)
+        loss.backward()
+        self.assertIsNotNone(logits.grad)
+        self.assertGreater(float(logits.grad[:, :, 1:3, :].abs().sum().item()), 0.0)
 
     def test_mrstft_loss_is_finite(self):
         loss_fn = MultiResolutionSTFTLoss(

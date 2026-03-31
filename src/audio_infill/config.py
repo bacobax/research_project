@@ -87,6 +87,7 @@ class TrainConfig:
     mask_stride: int = 1
     activity_guided_masking: bool = True
 
+    use_encoder_decoder: bool = False
     decoded_loss_enabled: bool = False
     decoded_loss_weight: float = 0.0
     decoded_loss_start_step: int = 0
@@ -384,6 +385,9 @@ def parse_args(argv: Optional[List[str]] = None):
     parser.add_argument("--no-activity-guided-masking", dest="activity_guided_masking", action="store_false")
     parser.set_defaults(activity_guided_masking=None)
 
+    parser.add_argument("--use-encoder-decoder", dest="use_encoder_decoder", action="store_true")
+    parser.add_argument("--no-use-encoder-decoder", dest="use_encoder_decoder", action="store_false")
+    parser.set_defaults(use_encoder_decoder=None)
     parser.add_argument("--decoded-loss-enabled", dest="decoded_loss_enabled", action="store_true")
     parser.add_argument("--no-decoded-loss-enabled", dest="decoded_loss_enabled", action="store_false")
     parser.set_defaults(decoded_loss_enabled=None)
@@ -479,6 +483,7 @@ def parse_args(argv: Optional[List[str]] = None):
         "regime_uniform_prob": args.regime_uniform_prob,
         "mask_stride": args.mask_stride,
         "activity_guided_masking": args.activity_guided_masking,
+        "use_encoder_decoder": args.use_encoder_decoder,
         "decoded_loss_enabled": args.decoded_loss_enabled,
         "decoded_loss_weight": args.decoded_loss_weight,
         "decoded_loss_start_step": args.decoded_loss_start_step,
