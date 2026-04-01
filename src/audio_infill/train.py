@@ -29,6 +29,7 @@ from audio_infill.encodec_utils import (
     load_exported_decoder,
     logits_to_embeddings,
 )
+from audio_infill.retrieval import SameSongRetrievalCache, build_retrieval_feature_config
 from audio_infill.training_common import (
     log_hparams,
     load_training_checkpoint,
@@ -125,6 +126,20 @@ def choose_mask_regime(probs: Dict[str, float]) -> str:
         p = np.array([0.45, 0.30, 0.15, 0.10], dtype=np.float64)
     p = p / p.sum()
     return names[int(np.random.choice(len(names), p=p))]
+
+
+def normalize_bucket_lengths(lengths: Sequence[int]) -> Tuple[int, ...]:
+    return tuple(sorted({int(v) for v in lengths if int(v) > 0}))
+
+
+def resolve_bucket_length(mask_len: int, bucket_lengths: Sequence[int]) -> int:
+    target = int(mask_len)
+    if target <= 0:
+        raise ValueError("mask_len must be > 0")
+    normalized = normalize_bucket_lengths(bucket_lengths)
+    if not normalized:
+        return target
+    return min(normalized, key=lambda item: (abs(item - target), item))
 
 
 def compute_mask_candidate_weights(
@@ -267,8 +282,9 @@ class ValidationGroupSpec:
 
 
 class FixedMaskedSpanDataset(Dataset):
-    def __init__(self, examples: List[FixedValidationExample]):
+    def __init__(self, examples: List[FixedValidationExample], return_metadata: bool = False):
         self.examples = list(examples)
+        self.return_metadata = bool(return_metadata)
         mask_means = np.array([ex.mask_mean_activity for ex in self.examples], dtype=np.float32)
         mask_lengths = np.array([ex.mask_len for ex in self.examples], dtype=np.float32)
         self.summary = {
@@ -282,7 +298,15 @@ class FixedMaskedSpanDataset(Dataset):
 
     def __getitem__(self, idx: int):
         ex = self.examples[idx]
-        return ex.x.clone(), ex.y.clone(), ex.loss_mask.clone()
+        if not self.return_metadata:
+            return ex.x.clone(), ex.y.clone(), ex.loss_mask.clone()
+        metadata = {
+            "window_start": torch.tensor(int(ex.window_start), dtype=torch.long),
+            "mask_start": torch.tensor(int(ex.mask_start), dtype=torch.long),
+            "mask_len": torch.tensor(int(ex.mask_len), dtype=torch.long),
+            "window_len": torch.tensor(int(ex.y.shape[1]), dtype=torch.long),
+        }
+        return ex.x.clone(), ex.y.clone(), ex.loss_mask.clone(), metadata
 
 
 def slugify_component(text: str) -> str:
@@ -678,6 +702,7 @@ def build_fixed_validation_examples(
     mask_stride: int,
     seed: int,
     sample_name: str,
+    bucket_lengths: Optional[Sequence[int]] = None,
 ) -> Tuple[Dict[str, List[FixedValidationExample]], List[Tuple[int, int]]]:
     _, frames = codes.shape
     valid_starts = _valid_non_gap_starts(frames, seq_len, gaps)
@@ -704,6 +729,8 @@ def build_fixed_validation_examples(
             attempts += 1
             start = rng.choice(valid_starts)
             mask_len = min(seq_len, rng.randint(mask_min, max(mask_min, mask_max)))
+            if bucket_lengths:
+                mask_len = resolve_bucket_length(mask_len, bucket_lengths)
             offsets = candidate_mask_offsets(seq_len, mask_len, mask_stride)
             mask_start = int(rng.choice(offsets.tolist()))
             g0 = start + mask_start
@@ -775,8 +802,16 @@ def build_holdout_region_validation_examples(
     sample_name: str,
     dead_window_min_mean: float,
     dead_window_min_ratio: float,
+    bucket_lengths: Optional[Sequence[int]] = None,
 ) -> Tuple[Dict[str, List[FixedValidationExample]], Dict[str, List[ValidationRegion]], List[Tuple[int, int]], Dict[str, float]]:
     _, frames = codes.shape
+    normalized_buckets = normalize_bucket_lengths(bucket_lengths or ())
+    if normalized_buckets:
+        missing = [int(v) for v in mask_lengths if int(v) not in normalized_buckets]
+        if missing:
+            raise ValueError(
+                f"validation mask lengths {missing} are not present in retrieval bucket lengths {list(normalized_buckets)}"
+            )
     if region_len_frames < seq_len:
         raise ValueError(f"validation region length {region_len_frames} must be >= seq_len {seq_len}")
 
@@ -985,6 +1020,8 @@ class ActivityAwareMaskedSpanDataset(Dataset):
         blocked_ranges: Optional[List[Tuple[int, int]]] = None,
         mask_stride: int = 1,
         activity_guided_masking: bool = True,
+        return_metadata: bool = False,
+        bucket_lengths: Optional[Sequence[int]] = None,
     ):
         self.codes = codes
         self.K, self.F = codes.shape
@@ -1017,6 +1054,8 @@ class ActivityAwareMaskedSpanDataset(Dataset):
         self.max_resample_tries = int(max(1, max_resample_tries))
         self.mask_stride = int(max(1, mask_stride))
         self.activity_guided_masking = bool(activity_guided_masking)
+        self.return_metadata = bool(return_metadata)
+        self.bucket_lengths = normalize_bucket_lengths(bucket_lengths or ())
         rp = regime_probs or {
             "active": 0.45,
             "transition": 0.30,
@@ -1232,6 +1271,8 @@ class ActivityAwareMaskedSpanDataset(Dataset):
         mask_min, mask_max = self._mask_len_range
         mask_len = random.randint(mask_min, max(mask_min, mask_max))
         mask_len = min(mask_len, self.seq_len)
+        if self.bucket_lengths:
+            mask_len = resolve_bucket_length(mask_len, self.bucket_lengths)
         m0, m1, mask_meta = self._choose_mask_span(s, mask_len)
 
         x[:, m0:m1] = self.mask_token
@@ -1250,7 +1291,15 @@ class ActivityAwareMaskedSpanDataset(Dataset):
             }
         )
 
-        return x, y, loss_mask
+        if not self.return_metadata:
+            return x, y, loss_mask
+        metadata = {
+            "window_start": torch.tensor(int(s), dtype=torch.long),
+            "mask_start": torch.tensor(int(m0), dtype=torch.long),
+            "mask_len": torch.tensor(int(mask_len), dtype=torch.long),
+            "window_len": torch.tensor(int(self.seq_len), dtype=torch.long),
+        }
+        return x, y, loss_mask, metadata
 
 
 # Backward-compatible alias for any existing imports.
@@ -1269,6 +1318,7 @@ class _CodebookInfillerBase(nn.Module):
         max_len: int = 2048,
         dropout: float = 0.1,
         boundary_max_distance: int = 128,
+        retrieval_conditioning: bool = False,
     ):
         super().__init__()
         self.K = K
@@ -1285,6 +1335,18 @@ class _CodebookInfillerBase(nn.Module):
         self.head = nn.ModuleList([nn.Linear(d_model, bins) for _ in range(K)])
         self.dropout = nn.Dropout(dropout)
         self.d_model = int(d_model)
+        self.retrieval_conditioning = bool(retrieval_conditioning)
+        if self.retrieval_conditioning:
+            self.retrieval_query_norm = nn.LayerNorm(d_model)
+            self.retrieval_memory_norm = nn.LayerNorm(d_model)
+            self.retrieval_cross_attn = nn.MultiheadAttention(
+                embed_dim=d_model,
+                num_heads=n_heads,
+                dropout=dropout,
+                batch_first=True,
+            )
+            self.retrieval_output_norm = nn.LayerNorm(d_model)
+            self.retrieval_dropout = nn.Dropout(dropout)
 
     def _embed_tokens(
         self,
@@ -1305,6 +1367,84 @@ class _CodebookInfillerBase(nn.Module):
     def _project_logits(self, h: torch.Tensor) -> torch.Tensor:
         return torch.stack([self.head[k](h) for k in range(self.K)], dim=1)
 
+    def _fuse_retrieval_tokens(
+        self,
+        retrieval_payload: Optional[Dict[str, torch.Tensor]],
+    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
+        if not self.retrieval_conditioning or retrieval_payload is None:
+            return None, None, None
+
+        retrieval_tokens = retrieval_payload["tokens"]
+        retrieval_scores = retrieval_payload["scores"]
+        candidate_mask = retrieval_payload["candidate_mask"].bool()
+        retrieval_lengths = retrieval_payload["lengths"].long()
+        if retrieval_tokens.dim() != 4:
+            raise ValueError(
+                f"retrieval tokens must have shape [B,R,K,T], got {tuple(retrieval_tokens.shape)}"
+            )
+        bsz, top_k, codebooks, steps = retrieval_tokens.shape
+        if codebooks != self.K:
+            raise ValueError(f"retrieval codebook mismatch: expected K={self.K}, got {codebooks}")
+
+        flat_tokens = retrieval_tokens.reshape(bsz * top_k, codebooks, steps)
+        positions = torch.arange(steps, device=retrieval_tokens.device, dtype=torch.long).unsqueeze(0).expand(bsz * top_k, steps)
+        fused = self.pos(positions)
+        for k in range(self.K):
+            fused = fused + self.emb[k](flat_tokens[:, k, :])
+        fused = fused.view(bsz, top_k, steps, self.d_model)
+
+        valid_steps = (
+            torch.arange(steps, device=retrieval_tokens.device, dtype=torch.long).unsqueeze(0)
+            < retrieval_lengths.unsqueeze(1)
+        )
+        fused = fused * valid_steps.unsqueeze(1).unsqueeze(-1).to(dtype=fused.dtype)
+
+        score_weights = torch.softmax(
+            retrieval_scores.masked_fill(~candidate_mask, -1e9),
+            dim=1,
+        )
+        score_weights = torch.where(candidate_mask, score_weights, torch.zeros_like(score_weights))
+        score_weights = score_weights / score_weights.sum(dim=1, keepdim=True).clamp_min(1e-8)
+        fused = torch.sum(fused * score_weights.unsqueeze(-1).unsqueeze(-1), dim=1)
+        key_padding_mask = ~valid_steps
+        retrieval_present = candidate_mask.any(dim=1) & retrieval_lengths.gt(0)
+        return fused, key_padding_mask, retrieval_present
+
+    def _apply_retrieval_cross_attention(
+        self,
+        hidden: torch.Tensor,
+        *,
+        retrieval_payload: Optional[Dict[str, torch.Tensor]] = None,
+        query_padding_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if not self.retrieval_conditioning or retrieval_payload is None:
+            return hidden
+
+        retrieval_memory, key_padding_mask, retrieval_present = self._fuse_retrieval_tokens(retrieval_payload)
+        if retrieval_memory is None or key_padding_mask is None or retrieval_present is None:
+            return hidden
+        if not bool(retrieval_present.any().item()):
+            return hidden
+
+        selected = retrieval_present.nonzero(as_tuple=False).flatten()
+        query = self.retrieval_query_norm(hidden[selected])
+        memory = self.retrieval_memory_norm(retrieval_memory[selected])
+        attn_out, _ = self.retrieval_cross_attn(
+            query=query,
+            key=memory,
+            value=memory,
+            key_padding_mask=key_padding_mask[selected],
+            need_weights=False,
+        )
+        if query_padding_mask is not None:
+            attn_out = attn_out.masked_fill(query_padding_mask[selected].unsqueeze(-1), 0.0)
+
+        updated = hidden.clone()
+        updated[selected] = self.retrieval_output_norm(
+            hidden[selected] + self.retrieval_dropout(attn_out)
+        )
+        return updated
+
 
 class JointCodebookInfiller(_CodebookInfillerBase):
     def __init__(
@@ -1318,6 +1458,7 @@ class JointCodebookInfiller(_CodebookInfillerBase):
         max_len: int = 2048,
         dropout: float = 0.1,
         boundary_max_distance: int = 128,
+        retrieval_conditioning: bool = False,
     ):
         super().__init__(
             K=K,
@@ -1329,6 +1470,7 @@ class JointCodebookInfiller(_CodebookInfillerBase):
             max_len=max_len,
             dropout=dropout,
             boundary_max_distance=boundary_max_distance,
+            retrieval_conditioning=retrieval_conditioning,
         )
 
         enc_layer = nn.TransformerEncoderLayer(
@@ -1348,6 +1490,7 @@ class JointCodebookInfiller(_CodebookInfillerBase):
         segment_ids: Optional[torch.Tensor] = None,
         left_dist_idx: Optional[torch.Tensor] = None,
         right_dist_idx: Optional[torch.Tensor] = None,
+        retrieval_payload: Optional[Dict[str, torch.Tensor]] = None,
     ) -> torch.Tensor:
         B, K, T = x.shape
         if segment_ids is None or left_dist_idx is None or right_dist_idx is None:
@@ -1362,6 +1505,7 @@ class JointCodebookInfiller(_CodebookInfillerBase):
         pos = torch.arange(T, device=x.device).unsqueeze(0).expand(B, T)
         h = self._embed_tokens(x, pos, segment_ids, left_dist_idx, right_dist_idx)
         h = self.enc(h)
+        h = self._apply_retrieval_cross_attention(h, retrieval_payload=retrieval_payload)
         return self._project_logits(h)
 
 
@@ -1377,6 +1521,7 @@ class EncoderDecoderCodebookInfiller(_CodebookInfillerBase):
         max_len: int = 2048,
         dropout: float = 0.1,
         boundary_max_distance: int = 128,
+        retrieval_conditioning: bool = False,
     ):
         super().__init__(
             K=K,
@@ -1388,6 +1533,7 @@ class EncoderDecoderCodebookInfiller(_CodebookInfillerBase):
             max_len=max_len,
             dropout=dropout,
             boundary_max_distance=boundary_max_distance,
+            retrieval_conditioning=retrieval_conditioning,
         )
         enc_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
@@ -1416,6 +1562,7 @@ class EncoderDecoderCodebookInfiller(_CodebookInfillerBase):
         segment_ids: Optional[torch.Tensor] = None,
         left_dist_idx: Optional[torch.Tensor] = None,
         right_dist_idx: Optional[torch.Tensor] = None,
+        retrieval_payload: Optional[Dict[str, torch.Tensor]] = None,
     ) -> torch.Tensor:
         B, K, T = x.shape
         if segment_ids is None or left_dist_idx is None or right_dist_idx is None:
@@ -1502,6 +1649,11 @@ class EncoderDecoderCodebookInfiller(_CodebookInfillerBase):
             memory=memory,
             tgt_key_padding_mask=gap_padding_mask,
             memory_key_padding_mask=ctx_padding_mask,
+        )
+        decoded = self._apply_retrieval_cross_attention(
+            decoded,
+            retrieval_payload=retrieval_payload,
+            query_padding_mask=gap_padding_mask,
         )
         gap_logits = self._project_logits(decoded)
 
@@ -1593,6 +1745,7 @@ class Trainer:
 
         self._log_hparams()
         self._load_audio()
+        self._build_retrieval()
         self._build_validation()
         self._build_dataset()
         self._build_model()
@@ -1738,6 +1891,217 @@ class Trainer:
         self.gap_f0 = self.gaps_f[0][0]
         self.gap_f1 = self.gaps_f[0][1]
 
+    def _build_retrieval(self):
+        cfg = self.cfg
+        self.retrieval_enabled = bool(cfg.use_retrieval_conditioning)
+        self.retrieval_cache: Optional[SameSongRetrievalCache] = None
+        self.retrieval_bucket_lengths: Tuple[int, ...] = ()
+        self.writer.add_scalar("model/use_retrieval_conditioning", float(self.retrieval_enabled), 0)
+        if not self.retrieval_enabled:
+            logger.info("Retrieval conditioning disabled")
+            return
+
+        if cfg.retrieval_bucket_lengths:
+            bucket_lengths = normalize_bucket_lengths(cfg.retrieval_bucket_lengths)
+        elif cfg.validation_mask_lengths:
+            bucket_lengths = normalize_bucket_lengths(cfg.validation_mask_lengths)
+        else:
+            midpoint = int((int(cfg.mask_len_min) + int(cfg.mask_len_max)) // 2)
+            bucket_lengths = normalize_bucket_lengths([cfg.mask_len_min, midpoint, cfg.mask_len_max])
+        if not bucket_lengths:
+            raise ValueError("retrieval-enabled runs require at least one retrieval bucket length")
+        self.retrieval_bucket_lengths = bucket_lengths
+
+        sample_name = cfg.sample or Path(cfg.wav_path).stem
+        self.retrieval_cache = SameSongRetrievalCache(
+            waveform=self.wav.squeeze(0),
+            codes=self.codes,
+            gaps=self.gaps_f,
+            target_sr=cfg.target_sr,
+            cache_dir=cfg.retrieval_cache_dir,
+            sample_name=sample_name,
+            feature_cfg=build_retrieval_feature_config(cfg),
+            rebuild_cache=cfg.retrieval_rebuild_cache,
+            supported_lengths=bucket_lengths,
+        )
+        logger.info(
+            "Retrieval conditioning enabled: sample=%s feature=%s pool=%s top_k=%d exclusion_margin=%d cache_dir=%s bucket_lengths=%s",
+            sample_name,
+            cfg.retrieval_feature_type,
+            cfg.retrieval_pool_mode,
+            cfg.retrieval_top_k,
+            cfg.retrieval_exclusion_margin_frames,
+            cfg.retrieval_cache_dir,
+            list(bucket_lengths),
+        )
+        if cfg.retrieval_prebuild_banks:
+            summary = self.retrieval_cache.prebuild_banks(
+                bucket_lengths=bucket_lengths,
+                left_context_resolver=self._resolve_retrieval_context_frames,
+                stride_resolver=self._resolve_retrieval_stride_frames,
+                logger=logger,
+            )
+            logger.info(
+                "Retrieval prebuild complete: banks=%d total_entries=%d elapsed=%.2fs",
+                len(summary["banks"]),
+                summary["total_entries"],
+                summary["elapsed_sec"],
+            )
+        self.writer.add_scalar("retrieval/cache_size", float(self.retrieval_cache.cache_size()), 0)
+        self.writer.add_scalar("retrieval/top_k", float(cfg.retrieval_top_k), 0)
+        self.writer.add_scalar(
+            "retrieval/exclusion_margin_frames",
+            float(cfg.retrieval_exclusion_margin_frames),
+            0,
+        )
+        for idx, length in enumerate(bucket_lengths):
+            self.writer.add_scalar(f"retrieval/bucket_len_{idx}", float(length), 0)
+
+    def _resolve_retrieval_context_frames(self, mask_len: int) -> Tuple[int, int]:
+        cfg = self.cfg
+        if cfg.retrieval_left_context_frames is not None:
+            left = int(cfg.retrieval_left_context_frames)
+        elif cfg.ctx_left is not None:
+            left = int(cfg.ctx_left)
+        else:
+            left = int(mask_len)
+
+        if cfg.retrieval_right_context_frames is not None:
+            right = int(cfg.retrieval_right_context_frames)
+        elif cfg.ctx_right is not None:
+            right = int(cfg.ctx_right)
+        else:
+            right = int(mask_len)
+        return left, right
+
+    def _resolve_retrieval_stride_frames(self, mask_len: int) -> int:
+        cfg = self.cfg
+        if cfg.retrieval_candidate_stride_frames is not None:
+            return int(cfg.retrieval_candidate_stride_frames)
+        return max(1, int(mask_len) // 2)
+
+    def _unpack_batch(
+        self,
+        batch: Any,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[Dict[str, torch.Tensor]]]:
+        if isinstance(batch, (list, tuple)) and len(batch) == 4:
+            x, y, loss_mask, metadata = batch
+            return x, y, loss_mask, metadata
+        if isinstance(batch, (list, tuple)) and len(batch) == 3:
+            x, y, loss_mask = batch
+            return x, y, loss_mask, None
+        raise ValueError("Expected batch to contain (x, y, loss_mask) or (x, y, loss_mask, metadata)")
+
+    def _build_retrieval_payload(
+        self,
+        *,
+        window_starts: Sequence[int],
+        mask_starts: Sequence[int],
+        mask_lens: Sequence[int],
+    ) -> Tuple[Optional[Dict[str, torch.Tensor]], Dict[str, float]]:
+        zero_metrics = {
+            "retrieval_best_similarity": 0.0,
+            "retrieval_mean_similarity_topk": 0.0,
+            "retrieval_topk": float(self.cfg.retrieval_top_k),
+            "retrieval_used": 0.0,
+        }
+        if not getattr(self, "retrieval_enabled", False) or getattr(self, "retrieval_cache", None) is None:
+            return None, zero_metrics
+
+        batch_size = len(window_starts)
+        if batch_size == 0:
+            return None, zero_metrics
+
+        top_k = int(self.cfg.retrieval_top_k)
+        max_mask_len = max(int(v) for v in mask_lens)
+        tokens = torch.zeros((batch_size, top_k, self.K, max_mask_len), dtype=torch.long)
+        scores = torch.zeros((batch_size, top_k), dtype=torch.float32)
+        candidate_mask = torch.zeros((batch_size, top_k), dtype=torch.bool)
+        lengths = torch.zeros((batch_size,), dtype=torch.long)
+
+        best_scores: List[float] = []
+        mean_topk_scores: List[float] = []
+
+        for b_idx, (window_start, mask_start, mask_len) in enumerate(zip(window_starts, mask_starts, mask_lens)):
+            mask_len = int(mask_len)
+            gap_start = int(window_start) + int(mask_start)
+            gap_end = gap_start + mask_len
+            left_ctx, right_ctx = self._resolve_retrieval_context_frames(mask_len)
+            stride = self._resolve_retrieval_stride_frames(mask_len)
+            retrieved = self.retrieval_cache.query(
+                query_start_frame=gap_start,
+                query_end_frame=gap_end,
+                left_context_frames=left_ctx,
+                right_context_frames=right_ctx,
+                stride_frames=stride,
+                top_k=top_k,
+                exclusion_margin_frames=int(self.cfg.retrieval_exclusion_margin_frames),
+            )
+            if not retrieved:
+                continue
+
+            lengths[b_idx] = mask_len
+            best_scores.append(float(retrieved[0].similarity))
+            mean_topk_scores.append(float(np.mean([item.similarity for item in retrieved])))
+            for cand_idx, item in enumerate(retrieved[:top_k]):
+                fill_tokens = item.entry.fill_tokens
+                tokens[b_idx, cand_idx, :, : fill_tokens.shape[1]] = fill_tokens
+                scores[b_idx, cand_idx] = float(item.similarity)
+                candidate_mask[b_idx, cand_idx] = True
+
+        used = candidate_mask.any(dim=1)
+        if not bool(used.any().item()):
+            return None, zero_metrics
+
+        payload = {
+            "tokens": tokens.to(self.device, non_blocking=True),
+            "scores": scores.to(self.device, non_blocking=True),
+            "candidate_mask": candidate_mask.to(self.device, non_blocking=True),
+            "lengths": lengths.to(self.device, non_blocking=True),
+        }
+        metrics = {
+            "retrieval_best_similarity": float(np.mean(best_scores)) if best_scores else 0.0,
+            "retrieval_mean_similarity_topk": float(np.mean(mean_topk_scores)) if mean_topk_scores else 0.0,
+            "retrieval_topk": float(top_k),
+            "retrieval_used": float(used.float().mean().item()),
+        }
+        return payload, metrics
+
+    def _build_retrieval_payload_from_metadata(
+        self,
+        metadata: Optional[Dict[str, torch.Tensor]],
+        loss_mask: torch.Tensor,
+    ) -> Tuple[Optional[Dict[str, torch.Tensor]], Dict[str, float]]:
+        if metadata is None:
+            return None, {
+                "retrieval_best_similarity": 0.0,
+                "retrieval_mean_similarity_topk": 0.0,
+                "retrieval_topk": float(self.cfg.retrieval_top_k),
+                "retrieval_used": 0.0,
+            }
+
+        def _to_int_list(value: Any) -> List[int]:
+            if isinstance(value, torch.Tensor):
+                items = value.detach().cpu().tolist()
+            elif isinstance(value, np.ndarray):
+                items = value.tolist()
+            elif isinstance(value, (list, tuple)):
+                items = list(value)
+            else:
+                items = [value]
+            return [int(v) for v in items]
+
+        mask_start_t, gap_end_t = extract_contiguous_mask_bounds(loss_mask)
+        inferred_mask_lens = _to_int_list(gap_end_t - mask_start_t)
+        window_starts = _to_int_list(metadata["window_start"])
+        mask_starts = _to_int_list(metadata.get("mask_start", mask_start_t))
+        mask_lens = _to_int_list(metadata.get("mask_len", inferred_mask_lens))
+        return self._build_retrieval_payload(
+            window_starts=window_starts,
+            mask_starts=mask_starts,
+            mask_lens=mask_lens,
+        )
+
     def _build_dataset(self):
         cfg = self.cfg
         self.dataset = ActivityAwareMaskedSpanDataset(
@@ -1762,6 +2126,8 @@ class Trainer:
             blocked_ranges=getattr(self, "validation_holdout_ranges", []),
             mask_stride=cfg.mask_stride,
             activity_guided_masking=cfg.activity_guided_masking,
+            return_metadata=cfg.use_retrieval_conditioning,
+            bucket_lengths=self.retrieval_bucket_lengths if cfg.use_retrieval_conditioning else (),
         )
         self.dataloader = DataLoader(
             self.dataset,
@@ -1820,6 +2186,7 @@ class Trainer:
                 sample_name=cfg.sample or Path(cfg.wav_path).stem,
                 dead_window_min_mean=cfg.dead_window_min_mean,
                 dead_window_min_ratio=cfg.dead_window_min_ratio,
+                bucket_lengths=self.retrieval_bucket_lengths if cfg.use_retrieval_conditioning else (),
             )
             self.validation_group_specs = {
                 key: ValidationGroupSpec(
@@ -1847,6 +2214,7 @@ class Trainer:
                 mask_stride=cfg.mask_stride,
                 seed=cfg.seed + 1009,
                 sample_name=cfg.sample or Path(cfg.wav_path).stem,
+                bucket_lengths=self.retrieval_bucket_lengths if cfg.use_retrieval_conditioning else (),
             )
             validation_metadata = {}
             self.validation_group_specs = {
@@ -1869,7 +2237,7 @@ class Trainer:
             self.writer.add_scalar(f"validation/{key}", float(value), 0)
 
         for group_name, items in loader_examples.items():
-            dataset = FixedMaskedSpanDataset(items)
+            dataset = FixedMaskedSpanDataset(items, return_metadata=cfg.use_retrieval_conditioning)
             self.validation_dataloaders[group_name] = DataLoader(
                 dataset,
                 batch_size=val_batch_size,
@@ -1895,6 +2263,7 @@ class Trainer:
             max_len=cfg.max_len,
             dropout=cfg.dropout,
             boundary_max_distance=cfg.boundary_max_distance,
+            retrieval_conditioning=cfg.use_retrieval_conditioning,
         ).to(self.device)
 
         n_params = sum(p.numel() for p in self.model.parameters())
@@ -1920,6 +2289,24 @@ class Trainer:
             betas=cfg.betas,
         )
         self.scaler = torch.amp.GradScaler(enabled=(self.device.type == "cuda"))
+
+    def _model_forward(
+        self,
+        x: torch.Tensor,
+        segment_ids: torch.Tensor,
+        left_dist_idx: torch.Tensor,
+        right_dist_idx: torch.Tensor,
+        retrieval_payload: Optional[Dict[str, torch.Tensor]] = None,
+    ) -> torch.Tensor:
+        if retrieval_payload is None:
+            return self.model(x, segment_ids, left_dist_idx, right_dist_idx)
+        return self.model(
+            x,
+            segment_ids,
+            left_dist_idx,
+            right_dist_idx,
+            retrieval_payload=retrieval_payload,
+        )
 
     def _build_decoded_loss(self):
         cfg = self.cfg
@@ -2196,7 +2583,12 @@ class Trainer:
     def _predict_validation_window(self, example: FixedValidationExample) -> torch.Tensor:
         xb = example.x.unsqueeze(0).to(self.device, non_blocking=True)
         seg_ids, left_idx, right_idx = self._build_model_boundary_tensors(example.loss_mask.to(self.device))
-        logits = self.model(xb, seg_ids, left_idx, right_idx)
+        retrieval_payload, _ = self._build_retrieval_payload(
+            window_starts=[int(example.window_start)],
+            mask_starts=[int(example.mask_start)],
+            mask_lens=[int(example.mask_len)],
+        )
+        logits = self._model_forward(xb, seg_ids, left_idx, right_idx, retrieval_payload=retrieval_payload)
         pred = logits.argmax(dim=-1).squeeze(0).detach().cpu()
         filled = example.y.clone()
         filled[:, example.loss_mask] = pred[:, example.loss_mask]
@@ -2426,13 +2818,15 @@ class Trainer:
                 total_acc1 = 0.0
                 total_acc5 = 0.0
                 count = 0
-                for x, y, loss_mask in loader:
+                for batch in loader:
+                    x, y, loss_mask, metadata = self._unpack_batch(batch)
                     x = x.to(self.device, non_blocking=True)
                     y = y.to(self.device, non_blocking=True)
                     loss_mask = loss_mask.to(self.device, non_blocking=True).bool()
                     seg_ids, left_idx, right_idx = self._build_model_boundary_tensors(loss_mask)
+                    retrieval_payload, _ = self._build_retrieval_payload_from_metadata(metadata, loss_mask)
                     with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=use_amp):
-                        logits = self.model(x, seg_ids, left_idx, right_idx)
+                        logits = self._model_forward(x, seg_ids, left_idx, right_idx, retrieval_payload=retrieval_payload)
                         loss = self._compute_loss(logits, y, loss_mask)
                     metrics = self._compute_masked_metrics(logits, y, loss_mask)
                     batch_size = int(x.shape[0])
@@ -2525,31 +2919,41 @@ class Trainer:
                 f"{ckpt_use_encoder_decoder}, current config use_encoder_decoder={self.cfg.use_encoder_decoder}"
             )
         model_state = ckpt["model"]
-        boundary_compat_mode = False
+        compat_mode = False
         try:
             self.model.load_state_dict(model_state)
         except RuntimeError as exc:
             incompatible = self.model.load_state_dict(model_state, strict=False)
+            missing = set(incompatible.missing_keys)
+            unexpected = set(incompatible.unexpected_keys)
             allowed_missing = {
                 "segment_emb.weight",
                 "left_distance_emb.weight",
                 "right_distance_emb.weight",
             }
-            missing = set(incompatible.missing_keys)
-            unexpected = set(incompatible.unexpected_keys)
-            if unexpected or not missing.issubset(allowed_missing):
+            allowed_prefixes = (
+                "retrieval_query_norm.",
+                "retrieval_memory_norm.",
+                "retrieval_cross_attn.",
+                "retrieval_output_norm.",
+            )
+            allowed_missing_ok = all(
+                key in allowed_missing or any(key.startswith(prefix) for prefix in allowed_prefixes)
+                for key in missing
+            )
+            if unexpected or not allowed_missing_ok:
                 raise exc
-            boundary_compat_mode = True
+            compat_mode = True
             logger.warning(
-                "Loaded checkpoint without boundary-aware embeddings; newly initialized keys=%s",
+                "Loaded checkpoint with newly initialized compatibility keys=%s",
                 sorted(missing),
             )
-        if boundary_compat_mode:
+        if compat_mode:
             try:
                 self.optimizer.load_state_dict(ckpt["optimizer"])
             except ValueError:
                 logger.warning(
-                    "Checkpoint optimizer state is incompatible with boundary-aware parameters; using fresh optimizer state"
+                    "Checkpoint optimizer state is incompatible with the current parameter set; using fresh optimizer state"
                 )
         else:
             self.optimizer.load_state_dict(ckpt["optimizer"])
@@ -2591,21 +2995,24 @@ class Trainer:
                 cur_min, cur_max, cur_progress = self._curriculum_update(step)
 
             try:
-                x, y, loss_mask = next(data_iter)
+                batch = next(data_iter)
             except StopIteration:
                 data_iter = iter(self.dataloader)
-                x, y, loss_mask = next(data_iter)
+                batch = next(data_iter)
+
+            x, y, loss_mask, metadata = self._unpack_batch(batch)
 
             x = x.to(self.device, non_blocking=True)
             y = y.to(self.device, non_blocking=True)
             loss_mask = loss_mask.to(self.device, non_blocking=True).bool()
             seg_ids, left_idx, right_idx = self._build_model_boundary_tensors(loss_mask)
+            retrieval_payload, retrieval_metrics = self._build_retrieval_payload_from_metadata(metadata, loss_mask)
 
             lr = self._get_lr(step)
             self._set_lr(lr)
 
             with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=use_amp):
-                logits = self.model(x, seg_ids, left_idx, right_idx)
+                logits = self._model_forward(x, seg_ids, left_idx, right_idx, retrieval_payload=retrieval_payload)
                 total_loss, token_loss, decoded_metrics = self._compute_training_losses(
                     x,
                     logits,
@@ -2660,6 +3067,14 @@ class Trainer:
                 step,
             )
             self.writer.add_scalar("train/decoded_loss_items", decoded_metrics["decoded_loss_items"], step)
+            self.writer.add_scalar("train/retrieval_best_similarity", retrieval_metrics["retrieval_best_similarity"], step)
+            self.writer.add_scalar(
+                "train/retrieval_mean_similarity_topk",
+                retrieval_metrics["retrieval_mean_similarity_topk"],
+                step,
+            )
+            self.writer.add_scalar("train/retrieval_topk", retrieval_metrics["retrieval_topk"], step)
+            self.writer.add_scalar("train/retrieval_used", retrieval_metrics["retrieval_used"], step)
 
             if hasattr(self.dataset, "pop_recent_metrics"):
                 sample_metrics = self.dataset.pop_recent_metrics(cfg.batch_size)
@@ -2795,9 +3210,20 @@ class Trainer:
             local_loss_mask = torch.zeros((1, R - L), device=self.device, dtype=torch.bool)
             local_loss_mask[:, local_g0:local_g1] = True
             seg_ids, left_idx, right_idx = self._build_model_boundary_tensors(local_loss_mask)
+            retrieval_payload, _ = self._build_retrieval_payload(
+                window_starts=[int(L)],
+                mask_starts=[int(local_g0)],
+                mask_lens=[int(local_g1 - local_g0)],
+            )
 
             for it in range(cfg.inpaint_iters):
-                logits = self.model(xb, seg_ids, left_idx, right_idx)[0]
+                logits = self._model_forward(
+                    xb,
+                    seg_ids,
+                    left_idx,
+                    right_idx,
+                    retrieval_payload=retrieval_payload,
+                )[0]
                 pred = logits.argmax(dim=-1)
                 xb[0, :, local_g0:local_g1] = pred[:, local_g0:local_g1]
 

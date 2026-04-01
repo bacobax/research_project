@@ -11,7 +11,12 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from audio_infill.train import ActivityAwareMaskedSpanDataset, build_fixed_validation_examples, is_non_gap_window
+from audio_infill.train import (
+    ActivityAwareMaskedSpanDataset,
+    build_fixed_validation_examples,
+    build_holdout_region_validation_examples,
+    is_non_gap_window,
+)
 
 
 class TestValidationPoolBuilder(unittest.TestCase):
@@ -128,6 +133,48 @@ class TestValidationPoolBuilder(unittest.TestCase):
                 mask_stride=1,
                 seed=7,
                 sample_name="demo",
+            )
+
+    def test_fixed_validation_examples_snap_to_bucket_lengths(self):
+        pool, _ = build_fixed_validation_examples(
+            codes=self.codes,
+            gaps=self.gaps,
+            seq_len=32,
+            mask_len_range=(8, 12),
+            mask_token=99,
+            activity_per_frame=self.activity,
+            activity_low_thr=0.01,
+            activity_high_thr=0.80,
+            examples_per_band=4,
+            mask_stride=1,
+            seed=7,
+            sample_name="demo",
+            bucket_lengths=(8, 12),
+        )
+        all_lengths = [ex.mask_len for band in pool.values() for ex in band]
+        self.assertTrue(all(length in {8, 12} for length in all_lengths))
+
+    def test_holdout_validation_rejects_lengths_missing_from_buckets(self):
+        with self.assertRaises(ValueError):
+            build_holdout_region_validation_examples(
+                codes=self.codes,
+                gaps=self.gaps,
+                seq_len=32,
+                mask_lengths=(8, 12),
+                mask_token=99,
+                activity_per_frame=self.activity,
+                activity_low_thr=0.01,
+                activity_high_thr=0.80,
+                regions_per_band=1,
+                region_len_frames=64,
+                region_min_separation_frames=32,
+                examples_per_length_band=2,
+                mask_stride=1,
+                seed=7,
+                sample_name="demo",
+                dead_window_min_mean=0.01,
+                dead_window_min_ratio=0.03,
+                bucket_lengths=(8,),
             )
 
 

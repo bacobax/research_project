@@ -64,3 +64,25 @@ regime_low_prob: 0.15
 regime_uniform_prob: 0.10
 mask_stride: 1
 activity_guided_masking: true
+
+use_retrieval_conditioning: false
+retrieval_feature_type: mel
+retrieval_pool_mode: mean_std
+retrieval_top_k: 1
+retrieval_candidate_stride_frames: null
+retrieval_left_context_frames: null
+retrieval_right_context_frames: null
+retrieval_exclusion_margin_frames: 0
+retrieval_similarity_temperature: 1.0
+retrieval_rebuild_cache: false
+retrieval_cache_dir: outputs/retrieval_cache
+retrieval_bank_mode: bucketed
+retrieval_bucket_lengths: []
+retrieval_prebuild_banks: true
+retrieval_normalize_features: true
+retrieval_mel_n_fft: 2048
+retrieval_mel_hop_length: 256
+retrieval_mel_n_mels: 96
+retrieval_mel_fmin: 30.0
+retrieval_stft_n_fft: 2048
+retrieval_stft_hop_length: 256

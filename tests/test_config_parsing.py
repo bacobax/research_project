@@ -26,6 +26,12 @@ class TestConfigParsing(unittest.TestCase):
         self.assertTrue(cfg.weighted_sampling)
         self.assertTrue(cfg.activity_guided_masking)
         self.assertFalse(cfg.use_encoder_decoder)
+        self.assertFalse(cfg.use_retrieval_conditioning)
+        self.assertEqual(cfg.retrieval_feature_type, "mel")
+        self.assertEqual(cfg.retrieval_pool_mode, "mean_std")
+        self.assertEqual(cfg.retrieval_bank_mode, "bucketed")
+        self.assertEqual(cfg.retrieval_bucket_lengths, ())
+        self.assertTrue(cfg.retrieval_prebuild_banks)
 
     def test_cli_override_still_works(self):
         cfg, _ = parse_args([
@@ -44,6 +50,21 @@ class TestConfigParsing(unittest.TestCase):
             "--no-weighted-sampling",
             "--no-activity-guided-masking",
             "--use-encoder-decoder",
+            "--use-retrieval-conditioning",
+            "--retrieval-feature-type",
+            "stft_mag",
+            "--retrieval-pool-mode",
+            "mean",
+            "--retrieval-top-k",
+            "3",
+            "--retrieval-candidate-stride-frames",
+            "12",
+            "--retrieval-exclusion-margin-frames",
+            "4",
+            "--retrieval-bucket-lengths",
+            "187",
+            "375",
+            "750",
         ])
         self.assertEqual(cfg.total_steps, 123)
         self.assertEqual(cfg.device, "cpu")
@@ -53,6 +74,13 @@ class TestConfigParsing(unittest.TestCase):
         self.assertFalse(cfg.weighted_sampling)
         self.assertFalse(cfg.activity_guided_masking)
         self.assertTrue(cfg.use_encoder_decoder)
+        self.assertTrue(cfg.use_retrieval_conditioning)
+        self.assertEqual(cfg.retrieval_feature_type, "stft_mag")
+        self.assertEqual(cfg.retrieval_pool_mode, "mean")
+        self.assertEqual(cfg.retrieval_top_k, 3)
+        self.assertEqual(cfg.retrieval_candidate_stride_frames, 12)
+        self.assertEqual(cfg.retrieval_exclusion_margin_frames, 4)
+        self.assertEqual(cfg.retrieval_bucket_lengths, (187, 375, 750))
 
 
 if __name__ == "__main__":

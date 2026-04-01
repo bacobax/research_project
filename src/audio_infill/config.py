@@ -92,6 +92,28 @@ class TrainConfig:
     mask_stride: int = 1
     activity_guided_masking: bool = True
 
+    use_retrieval_conditioning: bool = False
+    retrieval_feature_type: str = "mel"
+    retrieval_pool_mode: str = "mean_std"
+    retrieval_top_k: int = 1
+    retrieval_candidate_stride_frames: Optional[int] = None
+    retrieval_left_context_frames: Optional[int] = None
+    retrieval_right_context_frames: Optional[int] = None
+    retrieval_exclusion_margin_frames: int = 0
+    retrieval_similarity_temperature: float = 1.0
+    retrieval_rebuild_cache: bool = False
+    retrieval_cache_dir: str = "outputs/retrieval_cache"
+    retrieval_bank_mode: str = "bucketed"
+    retrieval_bucket_lengths: Tuple[int, ...] = ()
+    retrieval_prebuild_banks: bool = True
+    retrieval_normalize_features: bool = True
+    retrieval_mel_n_fft: int = 2048
+    retrieval_mel_hop_length: int = 256
+    retrieval_mel_n_mels: int = 96
+    retrieval_mel_fmin: float = 30.0
+    retrieval_stft_n_fft: int = 2048
+    retrieval_stft_hop_length: int = 256
+
     use_encoder_decoder: bool = False
     decoded_loss_enabled: bool = False
     decoded_loss_weight: float = 0.0
@@ -180,6 +202,37 @@ def validate_train_config(cfg: TrainConfig):
         raise ValueError("num_workers must be >= 0")
     if cfg.mask_stride <= 0:
         raise ValueError("mask_stride must be > 0")
+    if cfg.retrieval_feature_type not in {"mel", "stft_mag"}:
+        raise ValueError("retrieval_feature_type must be 'mel' or 'stft_mag'")
+    if cfg.retrieval_pool_mode not in {"mean", "mean_std"}:
+        raise ValueError("retrieval_pool_mode must be 'mean' or 'mean_std'")
+    if cfg.retrieval_bank_mode not in {"bucketed"}:
+        raise ValueError("retrieval_bank_mode must be 'bucketed'")
+    if cfg.retrieval_top_k <= 0:
+        raise ValueError("retrieval_top_k must be > 0")
+    if cfg.retrieval_candidate_stride_frames is not None and cfg.retrieval_candidate_stride_frames <= 0:
+        raise ValueError("retrieval_candidate_stride_frames must be > 0 when provided")
+    if cfg.retrieval_left_context_frames is not None and cfg.retrieval_left_context_frames < 0:
+        raise ValueError("retrieval_left_context_frames must be >= 0 when provided")
+    if cfg.retrieval_right_context_frames is not None and cfg.retrieval_right_context_frames < 0:
+        raise ValueError("retrieval_right_context_frames must be >= 0 when provided")
+    if cfg.retrieval_exclusion_margin_frames < 0:
+        raise ValueError("retrieval_exclusion_margin_frames must be >= 0")
+    if cfg.retrieval_similarity_temperature <= 0:
+        raise ValueError("retrieval_similarity_temperature must be > 0")
+    if any(v <= 0 for v in cfg.retrieval_bucket_lengths):
+        raise ValueError("retrieval_bucket_lengths must contain only positive values")
+    for name in [
+        "retrieval_mel_n_fft",
+        "retrieval_mel_hop_length",
+        "retrieval_mel_n_mels",
+        "retrieval_stft_n_fft",
+        "retrieval_stft_hop_length",
+    ]:
+        if getattr(cfg, name) <= 0:
+            raise ValueError(f"{name} must be > 0")
+    if cfg.retrieval_mel_fmin < 0:
+        raise ValueError("retrieval_mel_fmin must be >= 0")
     if cfg.decoded_loss_weight < 0:
         raise ValueError("decoded_loss_weight must be >= 0")
     if cfg.decoded_loss_start_step < 0:
@@ -411,6 +464,35 @@ def parse_args(argv: Optional[List[str]] = None):
     parser.add_argument("--activity-guided-masking", dest="activity_guided_masking", action="store_true")
     parser.add_argument("--no-activity-guided-masking", dest="activity_guided_masking", action="store_false")
     parser.set_defaults(activity_guided_masking=None)
+    parser.add_argument("--use-retrieval-conditioning", dest="use_retrieval_conditioning", action="store_true")
+    parser.add_argument("--no-use-retrieval-conditioning", dest="use_retrieval_conditioning", action="store_false")
+    parser.set_defaults(use_retrieval_conditioning=None)
+    parser.add_argument("--retrieval-feature-type", choices=["mel", "stft_mag"], default=None)
+    parser.add_argument("--retrieval-pool-mode", choices=["mean", "mean_std"], default=None)
+    parser.add_argument("--retrieval-top-k", type=int, default=None)
+    parser.add_argument("--retrieval-candidate-stride-frames", type=int, default=None)
+    parser.add_argument("--retrieval-left-context-frames", type=int, default=None)
+    parser.add_argument("--retrieval-right-context-frames", type=int, default=None)
+    parser.add_argument("--retrieval-exclusion-margin-frames", type=int, default=None)
+    parser.add_argument("--retrieval-similarity-temperature", type=float, default=None)
+    parser.add_argument("--retrieval-rebuild-cache", dest="retrieval_rebuild_cache", action="store_true")
+    parser.add_argument("--no-retrieval-rebuild-cache", dest="retrieval_rebuild_cache", action="store_false")
+    parser.set_defaults(retrieval_rebuild_cache=None)
+    parser.add_argument("--retrieval-cache-dir", type=str, default=None)
+    parser.add_argument("--retrieval-bank-mode", choices=["bucketed"], default=None)
+    parser.add_argument("--retrieval-bucket-lengths", nargs="+", type=int, default=None)
+    parser.add_argument("--retrieval-prebuild-banks", dest="retrieval_prebuild_banks", action="store_true")
+    parser.add_argument("--no-retrieval-prebuild-banks", dest="retrieval_prebuild_banks", action="store_false")
+    parser.set_defaults(retrieval_prebuild_banks=None)
+    parser.add_argument("--retrieval-normalize-features", dest="retrieval_normalize_features", action="store_true")
+    parser.add_argument("--no-retrieval-normalize-features", dest="retrieval_normalize_features", action="store_false")
+    parser.set_defaults(retrieval_normalize_features=None)
+    parser.add_argument("--retrieval-mel-n-fft", type=int, default=None)
+    parser.add_argument("--retrieval-mel-hop-length", type=int, default=None)
+    parser.add_argument("--retrieval-mel-n-mels", type=int, default=None)
+    parser.add_argument("--retrieval-mel-fmin", type=float, default=None)
+    parser.add_argument("--retrieval-stft-n-fft", type=int, default=None)
+    parser.add_argument("--retrieval-stft-hop-length", type=int, default=None)
 
     parser.add_argument("--use-encoder-decoder", dest="use_encoder_decoder", action="store_true")
     parser.add_argument("--no-use-encoder-decoder", dest="use_encoder_decoder", action="store_false")
@@ -440,7 +522,7 @@ def parse_args(argv: Optional[List[str]] = None):
         for key, value in data.items():
             name = key.replace("-", "_")
             if hasattr(cfg, name):
-                if name in {"betas", "validation_mask_lengths"} and isinstance(value, list):
+                if name in {"betas", "validation_mask_lengths", "retrieval_bucket_lengths"} and isinstance(value, list):
                     value = tuple(value)
                 setattr(cfg, name, value)
 
@@ -512,6 +594,27 @@ def parse_args(argv: Optional[List[str]] = None):
         "regime_uniform_prob": args.regime_uniform_prob,
         "mask_stride": args.mask_stride,
         "activity_guided_masking": args.activity_guided_masking,
+        "use_retrieval_conditioning": args.use_retrieval_conditioning,
+        "retrieval_feature_type": args.retrieval_feature_type,
+        "retrieval_pool_mode": args.retrieval_pool_mode,
+        "retrieval_top_k": args.retrieval_top_k,
+        "retrieval_candidate_stride_frames": args.retrieval_candidate_stride_frames,
+        "retrieval_left_context_frames": args.retrieval_left_context_frames,
+        "retrieval_right_context_frames": args.retrieval_right_context_frames,
+        "retrieval_exclusion_margin_frames": args.retrieval_exclusion_margin_frames,
+        "retrieval_similarity_temperature": args.retrieval_similarity_temperature,
+        "retrieval_rebuild_cache": args.retrieval_rebuild_cache,
+        "retrieval_cache_dir": args.retrieval_cache_dir,
+        "retrieval_bank_mode": args.retrieval_bank_mode,
+        "retrieval_bucket_lengths": tuple(args.retrieval_bucket_lengths) if args.retrieval_bucket_lengths is not None else None,
+        "retrieval_prebuild_banks": args.retrieval_prebuild_banks,
+        "retrieval_normalize_features": args.retrieval_normalize_features,
+        "retrieval_mel_n_fft": args.retrieval_mel_n_fft,
+        "retrieval_mel_hop_length": args.retrieval_mel_hop_length,
+        "retrieval_mel_n_mels": args.retrieval_mel_n_mels,
+        "retrieval_mel_fmin": args.retrieval_mel_fmin,
+        "retrieval_stft_n_fft": args.retrieval_stft_n_fft,
+        "retrieval_stft_hop_length": args.retrieval_stft_hop_length,
         "use_encoder_decoder": args.use_encoder_decoder,
         "decoded_loss_enabled": args.decoded_loss_enabled,
         "decoded_loss_weight": args.decoded_loss_weight,

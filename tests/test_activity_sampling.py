@@ -59,6 +59,33 @@ class TestActivityAwareSampling(unittest.TestCase):
             self.assertTrue(torch.equal(y[:, ~loss_mask], x[:, ~loss_mask]))
             self.assertTrue(torch.all(x[:, loss_mask] == 99))
 
+    def test_bucket_lengths_snap_mask_lengths(self):
+        ds = ActivityAwareMaskedSpanDataset(
+            codes=torch.randint(low=0, high=16, size=(4, 240), dtype=torch.long),
+            gaps=[(185, 205)],
+            seq_len=64,
+            mask_len_range=(8, 16),
+            mask_token=99,
+            virtual_size=32,
+            activity_per_frame=np.zeros(240, dtype=np.float32),
+            token_change_per_frame=np.zeros(240, dtype=np.float32),
+            activity_low_thr=0.0,
+            activity_high_thr=1.0,
+            weighted_sampling=False,
+            dead_window_min_mean=0.01,
+            dead_window_min_ratio=0.03,
+            mask_stride=1,
+            activity_guided_masking=False,
+            return_metadata=True,
+            bucket_lengths=(8, 12, 16),
+        )
+        seen = set()
+        for i in range(16):
+            _, _, loss_mask, metadata = ds[i]
+            seen.add(int(metadata["mask_len"].item()))
+            self.assertIn(int(loss_mask.sum().item()), {8, 12, 16})
+        self.assertTrue(seen.issubset({8, 12, 16}))
+
 
 if __name__ == "__main__":
     unittest.main()
