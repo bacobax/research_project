@@ -3,7 +3,7 @@ ds_dir: data/processed/multigap
 sample: wav_test_multigap_4x_1p0s_2p0s_5p0s_10p0s
 auto_hparam: true
 
-wav_path: data/interim/gapped_audio.wav
+wav_path: null
 target_sr: 24000
 bandwidth: 6.0
 gap_start_s: 200.0
@@ -35,7 +35,7 @@ log_every: 3000
 save_every: 18000
 test_fill_every: 18000
 
-validation_every: 18000
+validation_every: 6000
 validation_examples_per_band: 64
 validation_batch_size: 8
 validation_strategy: holdout_regions
@@ -51,9 +51,9 @@ validation_save_artifacts: true
 num_workers: 2
 
 output_dir: outputs/runs
-run_name: longrun_multigap_decoded_loss_val_v4_boundary_retrieval_small
+run_name: decoded_loss_val_boundary_retrieval_small
 seed: 42
-device: "cuda:1"
+device: "cuda:3"
 
 resume: null
 inpaint_only: false
@@ -64,6 +64,7 @@ curriculum: true
 curriculum_start_mask: 128
 curriculum_end_mask: 750
 curriculum_warmup_frac: 0.1
+curriculum_coverage: 1.0
 curriculum_schedule: linear
 
 activity_smooth_kernel: 9

@@ -50,6 +50,7 @@ curriculum: false
 curriculum_start_mask: null
 curriculum_end_mask: null
 curriculum_warmup_frac: 0.1
+curriculum_coverage: 1.0
 curriculum_schedule: linear
 
 activity_smooth_kernel: 9

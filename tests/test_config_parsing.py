@@ -32,6 +32,7 @@ class TestConfigParsing(unittest.TestCase):
         self.assertEqual(cfg.retrieval_bank_mode, "bucketed")
         self.assertEqual(cfg.retrieval_bucket_lengths, ())
         self.assertTrue(cfg.retrieval_prebuild_banks)
+        self.assertEqual(cfg.curriculum_coverage, 1.0)
 
     def test_cli_override_still_works(self):
         cfg, _ = parse_args([
@@ -61,6 +62,8 @@ class TestConfigParsing(unittest.TestCase):
             "12",
             "--retrieval-exclusion-margin-frames",
             "4",
+            "--curriculum-coverage",
+            "0.6",
             "--retrieval-bucket-lengths",
             "187",
             "375",
@@ -80,7 +83,15 @@ class TestConfigParsing(unittest.TestCase):
         self.assertEqual(cfg.retrieval_top_k, 3)
         self.assertEqual(cfg.retrieval_candidate_stride_frames, 12)
         self.assertEqual(cfg.retrieval_exclusion_margin_frames, 4)
+        self.assertEqual(cfg.curriculum_coverage, 0.6)
         self.assertEqual(cfg.retrieval_bucket_lengths, (187, 375, 750))
+
+    def test_loads_curriculum_coverage_from_yaml(self):
+        cfg, _ = parse_args([
+            "--config",
+            "configs/train/multigap_encoder_decoder_decoded_loss_val_v4_boundary_retrieval_small.yaml",
+        ])
+        self.assertEqual(cfg.curriculum_coverage, 0.5)
 
 
 if __name__ == "__main__":

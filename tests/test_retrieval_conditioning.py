@@ -2,6 +2,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import torch
@@ -165,6 +166,44 @@ class TestRetrievalConditioning(unittest.TestCase):
         )
         encdec_logits = encdec(x, seg_ids, left_idx, right_idx, retrieval_payload=payload)
         self.assertEqual(encdec_logits.shape, (1, 2, 6, 8))
+
+    def test_trainer_retrieval_payload_truncates_longer_bucket_candidates(self):
+        trainer = Trainer.__new__(Trainer)
+        trainer.cfg = TrainConfig(
+            retrieval_top_k=2,
+            retrieval_candidate_stride_frames=2,
+            retrieval_left_context_frames=3,
+            retrieval_right_context_frames=3,
+            retrieval_exclusion_margin_frames=1,
+        )
+        trainer.device = torch.device("cpu")
+        trainer.retrieval_enabled = True
+        trainer.K = 2
+
+        long_tokens = torch.arange(0, 2 * 8, dtype=torch.long).reshape(2, 8)
+        exact_tokens = torch.arange(100, 100 + 2 * 6, dtype=torch.long).reshape(2, 6)
+        trainer.retrieval_cache = SimpleNamespace(
+            query=lambda **kwargs: [
+                SimpleNamespace(entry=SimpleNamespace(fill_tokens=long_tokens), similarity=0.9),
+                SimpleNamespace(entry=SimpleNamespace(fill_tokens=exact_tokens), similarity=0.5),
+            ]
+        )
+
+        payload, metrics = trainer._build_retrieval_payload(
+            window_starts=[10],
+            mask_starts=[4],
+            mask_lens=[6],
+        )
+
+        self.assertIsNotNone(payload)
+        self.assertEqual(tuple(payload["tokens"].shape), (1, 2, 2, 6))
+        self.assertTrue(torch.equal(payload["tokens"][0, 0], long_tokens[:, :6]))
+        self.assertTrue(torch.equal(payload["tokens"][0, 1], exact_tokens))
+        self.assertEqual(int(payload["lengths"][0].item()), 6)
+        self.assertTrue(bool(payload["candidate_mask"][0, 0].item()))
+        self.assertTrue(bool(payload["candidate_mask"][0, 1].item()))
+        self.assertGreater(metrics["retrieval_best_similarity"], 0.0)
+        self.assertGreater(metrics["retrieval_used"], 0.0)
 
     def test_checkpoint_compat_allows_missing_retrieval_weights(self):
         with tempfile.TemporaryDirectory() as tmpdir:

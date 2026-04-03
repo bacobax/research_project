@@ -77,6 +77,7 @@ class TrainConfig:
     curriculum_start_mask: Optional[int] = None
     curriculum_end_mask: Optional[int] = None
     curriculum_warmup_frac: float = 0.1
+    curriculum_coverage: float = 1.0
     curriculum_schedule: str = "linear"
 
     activity_smooth_kernel: int = 9
@@ -272,6 +273,10 @@ def validate_train_config(cfg: TrainConfig):
         raise ValueError("activity_low_quantile must be <= activity_high_quantile")
     if cfg.curriculum_schedule not in {"linear", "cosine"}:
         raise ValueError("curriculum_schedule must be 'linear' or 'cosine'")
+    if not (0.0 < cfg.curriculum_coverage <= 1.0):
+        raise ValueError("curriculum_coverage must be in (0, 1]")
+    if cfg.curriculum_coverage < cfg.curriculum_warmup_frac:
+        raise ValueError("curriculum_coverage must be >= curriculum_warmup_frac")
     if (cfg.ctx_left is None) != (cfg.ctx_right is None):
         raise ValueError("ctx_left and ctx_right must both be set or both be null")
     if cfg.ctx_left is not None and cfg.ctx_left < 0:
@@ -446,6 +451,7 @@ def parse_args(argv: Optional[List[str]] = None):
     parser.add_argument("--curriculum-start-mask", type=int, default=None)
     parser.add_argument("--curriculum-end-mask", type=int, default=None)
     parser.add_argument("--curriculum-warmup-frac", type=float, default=None)
+    parser.add_argument("--curriculum-coverage", type=float, default=None)
     parser.add_argument("--curriculum-schedule", choices=["linear", "cosine"], default=None)
 
     parser.add_argument("--activity-smooth-kernel", type=int, default=None)
@@ -581,6 +587,7 @@ def parse_args(argv: Optional[List[str]] = None):
         "curriculum_start_mask": args.curriculum_start_mask,
         "curriculum_end_mask": args.curriculum_end_mask,
         "curriculum_warmup_frac": args.curriculum_warmup_frac,
+        "curriculum_coverage": args.curriculum_coverage,
         "curriculum_schedule": args.curriculum_schedule,
         "activity_smooth_kernel": args.activity_smooth_kernel,
         "activity_low_quantile": args.activity_low_quantile,

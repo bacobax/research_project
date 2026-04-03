@@ -1,9 +1,9 @@
-config: configs/train/multigap_decoded_loss_val_v3_boundary.yaml
+config: configs/train/multigap_encoder_decoder_decoded_loss_val_v4_boundary_retrieval_small.yaml
 ds_dir: data/processed/multigap
 sample: wav_test_multigap_4x_1p0s_2p0s_5p0s_10p0s
 auto_hparam: true
 
-wav_path: data/interim/gapped_audio.wav
+wav_path: null
 target_sr: 24000
 bandwidth: 6.0
 gap_start_s: 200.0
@@ -22,22 +22,22 @@ mask_len_max: 750
 ctx_left: null
 ctx_right: null
 
-batch_size: 16
-lr: 0.0003
+batch_size: 8
+lr: 0.0002
 weight_decay: 0.01
 betas: [0.9, 0.95]
 grad_clip: 1.5
-warmup_steps: 7000
+warmup_steps: 5000
 
-total_steps: 800000
+total_steps: 180000
 
-log_every: 6000
-save_every: 54000
-test_fill_every: 54000
+log_every: 3000
+save_every: 18000
+test_fill_every: 18000
 
-validation_every: 27000
+validation_every: 6000
 validation_examples_per_band: 64
-validation_batch_size: 16
+validation_batch_size: 8
 validation_strategy: holdout_regions
 validation_regions_per_band: 1
 validation_region_len_frames: 1536
@@ -51,9 +51,9 @@ validation_save_artifacts: true
 num_workers: 2
 
 output_dir: outputs/runs
-run_name: longrun_multigap_decoded_loss_val_v3_boundary
+run_name: decoded_loss_val_boundary_encoder_decoder_retrieval_small_topk1
 seed: 42
-device: cuda:3
+device: "cuda:1"
 
 resume: null
 inpaint_only: false
@@ -64,7 +64,7 @@ curriculum: true
 curriculum_start_mask: 128
 curriculum_end_mask: 750
 curriculum_warmup_frac: 0.1
-curriculum_coverage: 1.0
+curriculum_coverage: 0.85
 curriculum_schedule: linear
 
 activity_smooth_kernel: 9
@@ -72,20 +72,44 @@ activity_low_quantile: 0.30
 activity_high_quantile: 0.70
 weighted_sampling: true
 
-dead_window_min_mean: 0.005
-dead_window_min_ratio: 0.01
-regime_active_prob: 0.35
+dead_window_min_mean: 0.07
+dead_window_min_ratio: 0.03
+regime_active_prob: 0.45
 regime_transition_prob: 0.30
-regime_low_prob: 0.20
-regime_uniform_prob: 0.15
+regime_low_prob: 0.15
+regime_uniform_prob: 0.10
 
 mask_stride: 1
 activity_guided_masking: true
 
+use_encoder_decoder: true
+
+use_retrieval_conditioning: true
+retrieval_feature_type: mel
+retrieval_pool_mode: mean_std
+retrieval_top_k: 1
+retrieval_candidate_stride_frames: 32
+retrieval_left_context_frames: null
+retrieval_right_context_frames: null
+retrieval_exclusion_margin_frames: 64
+retrieval_similarity_temperature: 0.25
+retrieval_rebuild_cache: false
+retrieval_cache_dir: outputs/retrieval_cache
+retrieval_bank_mode: bucketed
+retrieval_bucket_lengths: [187, 375, 750]
+retrieval_prebuild_banks: true
+retrieval_normalize_features: true
+retrieval_mel_n_fft: 2048
+retrieval_mel_hop_length: 256
+retrieval_mel_n_mels: 96
+retrieval_mel_fmin: 30.0
+retrieval_stft_n_fft: 2048
+retrieval_stft_hop_length: 256
+
 decoded_loss_enabled: true
-decoded_loss_weight: 0.10
-decoded_loss_start_step: 7000
-decoded_loss_every: 4
+decoded_loss_weight: 0.05
+decoded_loss_start_step: 10000
+decoded_loss_every: 8
 decoded_loss_max_items: 1
 decoded_loss_margin_frames: 16
 decoded_loss_temperature: 1.0

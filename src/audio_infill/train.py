@@ -2040,14 +2040,23 @@ class Trainer:
             if not retrieved:
                 continue
 
-            lengths[b_idx] = mask_len
+            copied_length = 0
             best_scores.append(float(retrieved[0].similarity))
             mean_topk_scores.append(float(np.mean([item.similarity for item in retrieved])))
             for cand_idx, item in enumerate(retrieved[:top_k]):
                 fill_tokens = item.entry.fill_tokens
-                tokens[b_idx, cand_idx, :, : fill_tokens.shape[1]] = fill_tokens
+                if fill_tokens.dim() != 2 or fill_tokens.shape[0] != self.K:
+                    raise ValueError(
+                        f"retrieval fill_tokens must have shape [{self.K}, T], got {tuple(fill_tokens.shape)}"
+                    )
+                copy_len = min(int(fill_tokens.shape[1]), mask_len, max_mask_len)
+                if copy_len <= 0:
+                    continue
+                tokens[b_idx, cand_idx, :, :copy_len] = fill_tokens[:, :copy_len]
                 scores[b_idx, cand_idx] = float(item.similarity)
                 candidate_mask[b_idx, cand_idx] = True
+                copied_length = max(copied_length, copy_len)
+            lengths[b_idx] = copied_length
 
         used = candidate_mask.any(dim=1)
         if not bool(used.any().item()):
@@ -2344,23 +2353,26 @@ class Trainer:
         self.curriculum_end = cfg.curriculum_end_mask if cfg.curriculum_end_mask is not None \
             else self.largest_gap_frames
         self.curriculum_warmup_steps = int(cfg.curriculum_warmup_frac * cfg.total_steps)
+        self.curriculum_reach_max_step = int(cfg.total_steps * cfg.curriculum_coverage)
 
         logger.info(
-            "Curriculum enabled: start_mask=%d, end_mask=%d, warmup_steps=%d, schedule=%s",
+            "Curriculum enabled: start_mask=%d, end_mask=%d, warmup_steps=%d, reach_max_step=%d, schedule=%s",
             self.curriculum_start, self.curriculum_end,
-            self.curriculum_warmup_steps, cfg.curriculum_schedule,
+            self.curriculum_warmup_steps, self.curriculum_reach_max_step, cfg.curriculum_schedule,
         )
 
     def _curriculum_update(self, step: int):
         """Update mask range based on curriculum progress."""
         cfg = self.cfg
         warmup = self.curriculum_warmup_steps
-        total = cfg.total_steps
+        reach_max_step = self.curriculum_reach_max_step
 
-        if step <= warmup:
+        if step >= reach_max_step:
+            progress = 1.0
+        elif step <= warmup:
             progress = 0.0
         else:
-            progress = min(1.0, (step - warmup) / max(1, total - warmup))
+            progress = (step - warmup) / max(1, reach_max_step - warmup)
 
         if cfg.curriculum_schedule == "cosine":
             # Cosine: slow start, accelerate, slow finish
