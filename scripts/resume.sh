@@ -4,8 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
-export PYTHONPATH="$REPO_ROOT/src:${PYTHONPATH:-}"
 
 CONFIG_PATH="${CONFIG_PATH:-configs/train/resume_multigap.yaml}"
 
-python -m audio_infill.train --config "$CONFIG_PATH" "$@"
+uv run --project "$REPO_ROOT" audio-infill-train --config "$CONFIG_PATH" "$@"

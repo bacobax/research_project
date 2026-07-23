@@ -3,17 +3,17 @@
 ## Project Structure & Module Organization
 `src/audio_infill/` contains runtime code: `train.py`, `config.py`, `make_gapped_dataset.py`, and `graph.py`. Keep new Python modules under `src/audio_infill/`.
 
-`configs/train/*.yaml` and `configs/data/*.yaml` store experiment settings; prefer new YAML over hard-coded values. `scripts/*.sh` are thin wrappers that set `PYTHONPATH=src` and pick a config. `tests/test_*.py` covers config parsing, dataset logic, validation, and decoded-loss behavior. Exploratory work belongs in `notebooks/`, figures in `docs/figures/`, and prompt assets in `assets/prompts/`.
+`configs/train/*.yaml` and `configs/data/*.yaml` store experiment settings; prefer new YAML over hard-coded values. `scripts/*.sh` are thin wrappers that use `uv run` and pick a config. `tests/test_*.py` covers config parsing, dataset logic, validation, and decoded-loss behavior. Exploratory work belongs in `notebooks/`, figures in `docs/figures/`, and prompt assets in `assets/prompts/`.
 
 ## Build, Test, and Development Commands
-Run all commands from the repo root inside the `research-project` conda environment. For interactive work, use `conda activate research-project`. For scripted or agent execution, prefer `conda run -n research-project <command>`.
+Run all commands from the repository root. uv uses `.python-version` and manages the project-local `.venv`; do not activate or modify a shared environment.
 
-- `conda run -n research-project pip install -r requirements.txt`: install or refresh dependencies in the shared environment.
-- `conda run -n research-project env PYTHONPATH=src python -m pytest -q`: run the full test suite.
-- `conda run -n research-project env PYTHONPATH=src python -m unittest discover -s tests -p 'test_*.py'`: fallback if `pytest` is unavailable.
-- `conda run -n research-project scripts/smoke_test.sh`: run the smallest training config for a fast pipeline check.
-- `conda run -n research-project scripts/run_train.sh` or `conda run -n research-project scripts/resume.sh`: start the default long run or resume flow.
-- `conda run -n research-project env PYTHONPATH=src python -m audio_infill.make_gapped_dataset --help`: inspect dataset-generation options.
+- `uv sync`: create or refresh `.venv` from `uv.lock`.
+- `uv run pytest -q`: run the full test suite.
+- `uv run python -m unittest discover -s tests -p 'test_*.py'`: standard-library test fallback.
+- `scripts/smoke_test.sh`: run the smallest training config for a fast pipeline check.
+- `scripts/run_train.sh` or `scripts/resume.sh`: start the default long run or resume flow.
+- `uv run audio-infill-dataset --help`: inspect dataset-generation options.
 
 ## Coding Style & Naming Conventions
 Follow the existing Python style: 4-space indentation, snake_case for functions, variables, files, and YAML keys, and PascalCase for dataclasses and `unittest.TestCase` classes. Keep imports readable, use type hints where surrounding code does, and match local logging/config patterns.

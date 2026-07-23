@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "audio-infill"
+version = "0.1.0"
+description = "Config-driven audio infill training and dataset tools"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "encodec",
+    "librosa",
+    "matplotlib",
+    "numpy",
+    "pyyaml",
+    "soundfile",
+    "tensorboard",
+    "torch",
+    "torchviz",
+    "tqdm",
+]
+
+[project.scripts]
+audio-infill-dataset = "audio_infill.make_gapped_dataset:main"
+audio-infill-graph = "audio_infill.graph:main"
+audio-infill-train = "audio_infill.train:main"
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
