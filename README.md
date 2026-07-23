@@ -2,6 +2,18 @@
 
 This repository is now organized as a config-driven Python project. Training parameters are defined in YAML files and shell scripts are thin wrappers that only select a config.
 
+## Setup
+
+Install [uv](https://docs.astral.sh/uv/), then create and synchronize the
+project-local `.venv` from the lockfile:
+
+```bash
+uv sync
+```
+
+The project pins Python 3.11 in `.python-version`; uv downloads it when needed.
+Run Python tools through `uv run` so the environment stays synchronized.
+
 ## Project Layout
 
 - `src/audio_infill/`: core source code (`train.py`, `make_gapped_dataset.py`, `graph.py`)
@@ -23,13 +35,13 @@ This repository is now organized as a config-driven Python project. Training par
 Training now runs through a YAML config:
 
 ```bash
-PYTHONPATH=src python -m audio_infill.train --config configs/train/longrun.yaml
+uv run audio-infill-train --config configs/train/longrun.yaml
 ```
 
 CLI overrides are optional and remain supported:
 
 ```bash
-PYTHONPATH=src python -m audio_infill.train \
+uv run audio-infill-train \
   --config configs/train/longrun.yaml \
   --total-steps 1000 \
   --device cuda:0
@@ -67,7 +79,7 @@ Key files:
 Dataset generation script remains available:
 
 ```bash
-PYTHONPATH=src python -m audio_infill.make_gapped_dataset --help
+uv run audio-infill-dataset --help
 ```
 
 Data config templates are provided in `configs/data/` for reproducible parameter sets.
@@ -84,7 +96,11 @@ Generated training artifacts are written under `outputs/`:
 Run tests from the repository root:
 
 ```bash
-PYTHONPATH=src python -m pytest -q
+uv run pytest -q
 ```
 
-If `pytest` is unavailable, install it or run via `python -m unittest discover -s tests -p 'test_*.py'`.
+To run the standard-library fallback:
+
+```bash
+uv run python -m unittest discover -s tests -p 'test_*.py'
+```
