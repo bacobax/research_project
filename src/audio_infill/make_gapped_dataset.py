@@ -154,6 +154,19 @@ def next_pow2(n: int) -> int:
     return 1 << (n - 1).bit_length()
 
 
+def format_gap_duration_tag(gap_len_s: float) -> str:
+    """Format gap durations without rounding subsecond gaps to zero seconds."""
+    gap_len_s = float(gap_len_s)
+    if gap_len_s < 1.0:
+        milliseconds = gap_len_s * 1000.0
+        if math.isclose(milliseconds, round(milliseconds), abs_tol=1e-9):
+            value = str(int(round(milliseconds)))
+        else:
+            value = f"{milliseconds:.3f}".rstrip("0").rstrip(".")
+        return f"{value.replace('.', 'p')}ms"
+    return f"{gap_len_s:.1f}s".replace(".", "p")
+
+
 def load_wav_mono(path: str) -> Tuple[np.ndarray, int]:
     audio, sr = sf.read(path, always_2d=True)  # [T, C]
     audio = audio.astype(np.float32)
@@ -574,7 +587,7 @@ def main():
             })
 
         # Filenames
-        durations_tag = "_".join(f"{d:.1f}s" for d in gap_durations).replace(".", "p")
+        durations_tag = "_".join(format_gap_duration_tag(d) for d in gap_durations)
         tag = f"multigap_{num_gaps}x_{durations_tag}"
         wav_out = outdir / f"{base_name}_{tag}.wav"
         ann_out = outdir / f"{base_name}_{tag}.json"

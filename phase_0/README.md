@@ -1,0 +1,78 @@
+# Phase 0 — validating the measurement before trusting the negative result
+
+Two training runs (`nuvole_bianche_short_gaps_encoder_decoder` "baseline", and its bigger
+`..._bigmodel` variant) both show ~86%+ train token accuracy against ~1-10% validation accuracy,
+on a single 400s song. Before concluding "inpainting doesn't work," Phase 0 checks whether that
+conclusion is actually trustworthy: is the eval pipeline itself correct, does the model beat
+trivial non-learned baselines, and what do the numbers look like once decoded back to audio
+(where token-accuracy differences may not even be audible)?
+
+No new training happens here — everything runs against 4 already-saved, NaN-free checkpoints:
+
+| run | checkpoint tag | step |
+|---|---|---|
+| baseline | `best_val` | 20,000 |
+| baseline | `best` | 78,000 |
+| bigmodel | `best_val` | 20,000 |
+| bigmodel | `best` | 108,000 |
+
+(`latest`/`step_108000`/`step_162000` on the baseline run are excluded — post-divergence, all-NaN
+weights, verified by scanning every tensor in every checkpoint on disk.)
+
+## Files
+
+- `common.py` — shared infrastructure. Reconstructs a `Trainer` from a run's real training YAML
+  config plus one checkpoint's weights, **always redirected to `results/scratch/`** so nothing
+  under `outputs/runs/**` is ever touched (verified: file mtimes identical before/after running
+  every script here). Also has the train-region-control example builder, non-learned
+  token-space baseline fillers, and audio metrics (multi-res STFT, SI-SDR, log-mel L1).
+- `exp01_train_region_control.py` — **the decisive check.** Rebuilds validation-style examples
+  from regions the model *trained* on (not held out) and runs the identical
+  `Trainer.run_validation()` code path. If accuracy there tracks the training loop's own reported
+  train accuracy while holdout stays near-random, the pipeline is sound and the generalization
+  gap is real.
+- `exp02_baselines.py` — scores 5 non-learned token-space fillers (`repeat_left`, `repeat_right`,
+  `nearest`, `random_tokens`, `codec_ceiling`) plus the model, on the *exact same* examples the
+  real training run validated on (rebuilt deterministically from the run's own seed).
+- `exp03_decoded_metrics.py` — same examples/methods as exp02, but decodes each fill to audio and
+  scores the gap span (+ margin, matching `decoded_loss_margin_frames`) with SI-SDR, SNR,
+  waveform L1/MSE, log-mel L1, and multi-res spectral convergence/log-magnitude.
+- `exp04_real_gaps.py` — the 4 actual carved-out gaps (15/20/30/50ms), scored against
+  encode-then-decode of the true pre-gapping audio (`data/nuvole_bianche.mp3`), same methods and
+  metrics as exp03. This is the number that answers "how well does it fill the gaps you set out
+  to fill?"
+- `make_summary.py` — reads the four `results/exp0N_*.json` files and writes
+  `results/FINDINGS.md`; every number in that report is read back from the JSON, not
+  hand-authored.
+- `run_all.sh` — runs everything above in order.
+
+Note: `notebooks/same_song_retrieval_baselines.ipynb` already has waveform-domain retrieval
+baselines (copy-paste, boundary-aligned crossfade) with its own `evaluate_fill_metrics()`. Phase 0
+doesn't re-port those — exp02/exp03's baselines are token-space and scored on the model's own
+evaluation examples for a strict apples-to-apples comparison; cite the notebook's results
+separately when writing up.
+
+## Running
+
+```bash
+bash phase_0/run_all.sh
+```
+
+Or individually: `uv run python phase_0/exp01_train_region_control.py`, etc. Each takes roughly
+1-3 minutes (dominated by `Trainer.__init__`'s EnCodec load + whole-track encode, done once per
+checkpoint).
+
+## Sanity checks (should hold, or a script has a bug)
+
+- `random_tokens` baseline: acc_top1 ≈ 1/1024 ≈ 0.098%.
+- `codec_ceiling`: acc_top1 = 1.0 exactly; wave_l1 ≈ 0; very high SI-SDR.
+- exp01's reproduced holdout numbers match the values already in each run's real TensorBoard
+  logs (e.g. baseline step 20000: `val/high_acc_top1` = 0.009765625, bit-exact match verified).
+- No file under `outputs/runs/**/checkpoints/` or `outputs/runs/**/tb/` should have a modified
+  mtime after running anything here.
+
+## Results
+
+See `results/FINDINGS.md` after running, and `results/summary.csv` for the raw long-format table
+(`experiment, run, checkpoint, step, band, mask_len, method, metric, value`) if you want to slice
+it yourself (e.g. in pandas or a spreadsheet).

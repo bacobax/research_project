@@ -1,0 +1,13 @@
+wav: data/nuvole_bianche.mp3
+outdir: data/processed/nuvole_bianche_short_gaps
+gap_seconds: [0.015, 0.020, 0.030, 0.050]
+num_gaps: 4
+min_gap_separation_seconds: 1.0
+target_sr: 24000
+bandwidth: 6.0
+center_mode: random
+margin_seconds: 2.0
+seed: 42
+max_len_cap: 512
+prefer_pow2: false
+extra_ctx_s: 2.0

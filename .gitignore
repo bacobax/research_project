@@ -43,4 +43,8 @@ events.out.tfevents.*
 .cache/
 
 
-data
+/data/
+
+# Phase 0 experiment scratch space and any generated audio (raw results JSON/CSV/MD are kept)
+phase_0/results/scratch/
+phase_0/results/audio/
