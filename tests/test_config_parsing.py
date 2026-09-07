@@ -1,3 +1,5 @@
+import json
+import tempfile
 import unittest
 import sys
 from pathlib import Path
@@ -45,6 +47,46 @@ class TestConfigParsing(unittest.TestCase):
         self.assertFalse(cfg.weighted_sampling)
         self.assertFalse(cfg.activity_guided_masking)
         self.assertTrue(cfg.use_encoder_decoder)
+
+    def test_loads_nuvole_bianche_short_gap_train_config(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sample = "short_gap_fixture"
+            sample_dir = Path(tmpdir)
+            (sample_dir / f"{sample}.wav").touch()
+            (sample_dir / f"{sample}.json").write_text(
+                json.dumps(
+                    {
+                        "sr": 24000,
+                        "gaps": [
+                            {"gap_start_s": 1.0, "gap_end_s": 1.015},
+                            {"gap_start_s": 2.0, "gap_end_s": 2.020},
+                            {"gap_start_s": 3.0, "gap_end_s": 3.030},
+                            {"gap_start_s": 4.0, "gap_end_s": 4.050},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            cfg, _ = parse_args(
+                [
+                    "--config",
+                    "configs/train/nuvole_bianche_short_gaps_encoder_decoder.yaml",
+                    "--ds-dir",
+                    tmpdir,
+                    "--sample",
+                    sample,
+                ]
+            )
+
+        self.assertFalse(cfg.auto_hparam)
+        self.assertFalse(cfg.curriculum)
+        self.assertTrue(cfg.use_encoder_decoder)
+        self.assertTrue(cfg.decoded_loss_enabled)
+        self.assertEqual(cfg.seq_len, 512)
+        self.assertEqual(cfg.max_len, 512)
+        self.assertEqual((cfg.mask_len_min, cfg.mask_len_max), (1, 4))
+        self.assertEqual(cfg.validation_mask_lengths, (1, 2, 3, 4))
+        self.assertEqual(cfg.device, "cuda:0")
 
 
 if __name__ == "__main__":
