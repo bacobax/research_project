@@ -102,6 +102,25 @@ class TrainConfig:
     decoded_loss_n_ffts: Tuple[int, ...] = (512, 1024, 2048)
     decoded_loss_hop_lengths: Tuple[int, ...] = (128, 256, 512)
     decoded_loss_win_lengths: Tuple[int, ...] = (512, 1024, 2048)
+    decoded_loss_log_eps: float = 1e-7
+
+    # Multi-song training: extra clean (gap-free) songs sampled alongside the pivot.
+    extra_wavs_dir: Optional[str] = None
+    extra_wavs_glob: str = "*.wav"
+    extra_wavs_exclude: Tuple[str, ...] = ()
+    extra_wavs_limit: Optional[int] = None
+    extra_wav_paths: Tuple[str, ...] = ()
+    song_sampling: str = "duration"
+
+    # Automated early stopping / divergence guard.
+    early_stopping_enabled: bool = False
+    early_stopping_patience: int = 6
+    early_stopping_min_delta: float = 0.0
+    nan_guard_enabled: bool = True
+
+    # Validation-time decoded-audio-quality metrics (SI-SDR, spectral convergence).
+    validation_audio_metrics_enabled: bool = False
+    validation_audio_metrics_max_examples: Optional[int] = None
 
 
 def validate_train_config(cfg: TrainConfig):
@@ -167,6 +186,8 @@ def validate_train_config(cfg: TrainConfig):
         raise ValueError("decoded_loss_margin_frames must be >= 0")
     if cfg.decoded_loss_temperature <= 0:
         raise ValueError("decoded_loss_temperature must be > 0")
+    if cfg.decoded_loss_log_eps <= 0:
+        raise ValueError("decoded_loss_log_eps must be > 0")
     for name in [
         "decoded_loss_waveform_l1_weight",
         "decoded_loss_stft_weight",
@@ -208,6 +229,16 @@ def validate_train_config(cfg: TrainConfig):
     ]:
         if getattr(cfg, name) < 0:
             raise ValueError(f"{name} must be >= 0")
+    if cfg.song_sampling not in {"duration", "uniform"}:
+        raise ValueError("song_sampling must be 'duration' or 'uniform'")
+    if cfg.extra_wavs_limit is not None and cfg.extra_wavs_limit <= 0:
+        raise ValueError("extra_wavs_limit must be > 0 when provided")
+    if cfg.early_stopping_patience <= 0:
+        raise ValueError("early_stopping_patience must be > 0")
+    if cfg.early_stopping_min_delta < 0:
+        raise ValueError("early_stopping_min_delta must be >= 0")
+    if cfg.validation_audio_metrics_max_examples is not None and cfg.validation_audio_metrics_max_examples <= 0:
+        raise ValueError("validation_audio_metrics_max_examples must be > 0 when provided")
 
 
 def _parse_simple_yaml_value(raw: str) -> Any:
@@ -250,7 +281,7 @@ def load_yaml_config(path: str) -> Dict[str, Any]:
                 key, value = line.split(":", 1)
                 parsed = _parse_simple_yaml_value(value)
                 name = key.strip().replace("-", "_")
-                if name in {"betas", "validation_mask_lengths"} and isinstance(parsed, list):
+                if name in {"betas", "validation_mask_lengths", "extra_wavs_exclude", "extra_wav_paths"} and isinstance(parsed, list):
                     parsed = tuple(parsed)
                 mapping[key.strip()] = parsed
         return mapping
@@ -401,9 +432,35 @@ def parse_args(argv: Optional[List[str]] = None):
     parser.add_argument("--decoded-loss-stft-weight", type=float, default=None)
     parser.add_argument("--decoded-loss-spectral-convergence-weight", type=float, default=None)
     parser.add_argument("--decoded-loss-log-magnitude-weight", type=float, default=None)
+    parser.add_argument("--decoded-loss-log-eps", type=float, default=None)
     parser.add_argument("--decoded-loss-n-ffts", nargs="+", type=int, default=None)
     parser.add_argument("--decoded-loss-hop-lengths", nargs="+", type=int, default=None)
     parser.add_argument("--decoded-loss-win-lengths", nargs="+", type=int, default=None)
+
+    parser.add_argument("--extra-wavs-dir", type=str, default=None,
+                        help="Directory of additional clean (gap-free) wavs to train on alongside the pivot sample")
+    parser.add_argument("--extra-wavs-glob", type=str, default=None)
+    parser.add_argument("--extra-wavs-exclude", nargs="+", type=str, default=None,
+                        help="fnmatch patterns (against filename) to exclude from --extra-wavs-dir")
+    parser.add_argument("--extra-wavs-limit", type=int, default=None,
+                        help="Take only the first N extra wavs (sorted); combine with a fixed sort order for nested subsets")
+    parser.add_argument("--extra-wav-paths", nargs="+", type=str, default=None,
+                        help="Explicit list of extra wav paths; overrides --extra-wavs-dir when set")
+    parser.add_argument("--song-sampling", choices=["duration", "uniform"], default=None)
+
+    parser.add_argument("--early-stopping-enabled", dest="early_stopping_enabled", action="store_true")
+    parser.add_argument("--no-early-stopping-enabled", dest="early_stopping_enabled", action="store_false")
+    parser.set_defaults(early_stopping_enabled=None)
+    parser.add_argument("--early-stopping-patience", type=int, default=None)
+    parser.add_argument("--early-stopping-min-delta", type=float, default=None)
+    parser.add_argument("--nan-guard-enabled", dest="nan_guard_enabled", action="store_true")
+    parser.add_argument("--no-nan-guard-enabled", dest="nan_guard_enabled", action="store_false")
+    parser.set_defaults(nan_guard_enabled=None)
+
+    parser.add_argument("--validation-audio-metrics-enabled", dest="validation_audio_metrics_enabled", action="store_true")
+    parser.add_argument("--no-validation-audio-metrics-enabled", dest="validation_audio_metrics_enabled", action="store_false")
+    parser.set_defaults(validation_audio_metrics_enabled=None)
+    parser.add_argument("--validation-audio-metrics-max-examples", type=int, default=None)
 
     args = parser.parse_args(argv)
 
@@ -413,7 +470,7 @@ def parse_args(argv: Optional[List[str]] = None):
         for key, value in data.items():
             name = key.replace("-", "_")
             if hasattr(cfg, name):
-                if name in {"betas", "validation_mask_lengths"} and isinstance(value, list):
+                if name in {"betas", "validation_mask_lengths", "extra_wavs_exclude", "extra_wav_paths"} and isinstance(value, list):
                     value = tuple(value)
                 setattr(cfg, name, value)
 
@@ -495,9 +552,22 @@ def parse_args(argv: Optional[List[str]] = None):
         "decoded_loss_stft_weight": args.decoded_loss_stft_weight,
         "decoded_loss_spectral_convergence_weight": args.decoded_loss_spectral_convergence_weight,
         "decoded_loss_log_magnitude_weight": args.decoded_loss_log_magnitude_weight,
+        "decoded_loss_log_eps": args.decoded_loss_log_eps,
         "decoded_loss_n_ffts": tuple(args.decoded_loss_n_ffts) if args.decoded_loss_n_ffts is not None else None,
         "decoded_loss_hop_lengths": tuple(args.decoded_loss_hop_lengths) if args.decoded_loss_hop_lengths is not None else None,
         "decoded_loss_win_lengths": tuple(args.decoded_loss_win_lengths) if args.decoded_loss_win_lengths is not None else None,
+        "extra_wavs_dir": args.extra_wavs_dir,
+        "extra_wavs_glob": args.extra_wavs_glob,
+        "extra_wavs_exclude": tuple(args.extra_wavs_exclude) if args.extra_wavs_exclude is not None else None,
+        "extra_wavs_limit": args.extra_wavs_limit,
+        "extra_wav_paths": tuple(args.extra_wav_paths) if args.extra_wav_paths is not None else None,
+        "song_sampling": args.song_sampling,
+        "early_stopping_enabled": args.early_stopping_enabled,
+        "early_stopping_patience": args.early_stopping_patience,
+        "early_stopping_min_delta": args.early_stopping_min_delta,
+        "nan_guard_enabled": args.nan_guard_enabled,
+        "validation_audio_metrics_enabled": args.validation_audio_metrics_enabled,
+        "validation_audio_metrics_max_examples": args.validation_audio_metrics_max_examples,
     }
     for key, value in overrides.items():
         if value is not None:

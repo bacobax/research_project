@@ -1,0 +1,108 @@
+{
+  "pivot": {
+    "wav_path": "data/processed/nuvole_bianche_short_gaps/nuvole_bianche_multigap_4x_15ms_20ms_30ms_50ms.wav",
+    "duration_s": 400.2191666666667,
+    "frames": 30017,
+    "gaps_f": [
+      [
+        3164,
+        3167
+      ],
+      [
+        4275,
+        4276
+      ],
+      [
+        7427,
+        7429
+      ],
+      [
+        22279,
+        22280
+      ]
+    ]
+  },
+  "extra_songs": [
+    {
+      "wav_path": "dataset/001_Einaudi_Le_Onde.wav",
+      "duration_s": 323.9855,
+      "frames": 24299
+    },
+    {
+      "wav_path": "dataset/002_Ludovico_Einaudi_-_Nefeli_Visualiser.wav",
+      "duration_s": 251.49866666666668,
+      "frames": 18863
+    },
+    {
+      "wav_path": "dataset/003_Einaudi_Melodia_Africana_III.wav",
+      "duration_s": 258.8473333333333,
+      "frames": 19414
+    },
+    {
+      "wav_path": "dataset/004_Ludovico_Einaudi_-_Memory_One_Visualiser.wav",
+      "duration_s": 262.88475,
+      "frames": 19717
+    },
+    {
+      "wav_path": "dataset/005_Einaudi_I_Giorni.wav",
+      "duration_s": 359.21341666666666,
+      "frames": 26942
+    },
+    {
+      "wav_path": "dataset/006_Einaudi_In_Un_Altra_Vita.wav",
+      "duration_s": 320.05929166666664,
+      "frames": 24005
+    },
+    {
+      "wav_path": "dataset/007_Ludovico_Einaudi_-_Una_Mattina_Visualizer.wav",
+      "duration_s": 205.972625,
+      "frames": 15448
+    },
+    {
+      "wav_path": "dataset/009_Ludovico_Einaudi_-_Monday_Official_Visualizer.wav",
+      "duration_s": 356.879125,
+      "frames": 26766
+    },
+    {
+      "wav_path": "dataset/010_Ludovico_Einaudi_-_Jay.wav",
+      "duration_s": 192.70241666666666,
+      "frames": 14453
+    },
+    {
+      "wav_path": "dataset/011_Ludovico_Einaudi_-_Birdsong_from_DAY_2_Official_Video.wav",
+      "duration_s": 123.28533333333333,
+      "frames": 9247
+    },
+    {
+      "wav_path": "dataset/012_Ludovico_Einaudi_-_Adieux_Official_Visualiser.wav",
+      "duration_s": 175.56608333333332,
+      "frames": 13168
+    },
+    {
+      "wav_path": "dataset/013_Einaudi_Berlin_Song.wav",
+      "duration_s": 263.521,
+      "frames": 19765
+    },
+    {
+      "wav_path": "dataset/014_Ludovico_Einaudi_-_Experience_Official_Solo_Piano_Performance_Video.wav",
+      "duration_s": 323.651375,
+      "frames": 24274
+    },
+    {
+      "wav_path": "dataset/015_Ludovico_Einaudi_-_Luminous_Official_Visualiser.wav",
+      "duration_s": 284.08454166666667,
+      "frames": 21307
+    },
+    {
+      "wav_path": "dataset/016_Einaudi_Elegy_For_The_Arctic.wav",
+      "duration_s": 158.53708333333333,
+      "frames": 11891
+    },
+    {
+      "wav_path": "dataset/017_Einaudi_The_Snow_Prelude_No._2.wav",
+      "duration_s": 255.44845833333332,
+      "frames": 19159
+    }
+  ],
+  "song_sampling": "duration"
+}

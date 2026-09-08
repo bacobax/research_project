@@ -19,6 +19,7 @@ dependencies = [
     "torch",
     "torchviz",
     "tqdm",
+    "yt-dlp>=2026.8.19",
 ]
 
 [project.scripts]

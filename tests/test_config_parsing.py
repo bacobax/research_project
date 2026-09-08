@@ -26,6 +26,29 @@ class TestConfigParsing(unittest.TestCase):
         self.assertTrue(cfg.weighted_sampling)
         self.assertTrue(cfg.activity_guided_masking)
         self.assertFalse(cfg.use_encoder_decoder)
+        self.assertIsNone(cfg.extra_wavs_dir)
+        self.assertEqual(cfg.extra_wavs_glob, "*.wav")
+        self.assertEqual(cfg.extra_wavs_exclude, ())
+        self.assertIsNone(cfg.extra_wavs_limit)
+        self.assertEqual(cfg.extra_wav_paths, ())
+        self.assertEqual(cfg.song_sampling, "duration")
+
+    def test_multi_song_cli_overrides(self):
+        cfg, _ = parse_args([
+            "--extra-wavs-dir",
+            "dataset",
+            "--extra-wavs-exclude",
+            "008_*",
+            "other_*",
+            "--extra-wavs-limit",
+            "3",
+            "--song-sampling",
+            "uniform",
+        ])
+        self.assertEqual(cfg.extra_wavs_dir, "dataset")
+        self.assertEqual(cfg.extra_wavs_exclude, ("008_*", "other_*"))
+        self.assertEqual(cfg.extra_wavs_limit, 3)
+        self.assertEqual(cfg.song_sampling, "uniform")
 
     def test_cli_override_still_works(self):
         cfg, _ = parse_args([

@@ -25,6 +25,7 @@ Run Python tools through `uv run` so the environment stays synchronized.
 - `data/interim/`: temporary/intermediate audio artifacts
 - `outputs/runs/`: training outputs (checkpoints, tensorboard, samples)
 - `outputs/runs_test/`: smoke-test outputs
+- `phase_N/results/`: compact, Git-trackable results for papers and transfer
 - `notebooks/`: notebooks
 - `docs/figures/`: generated diagrams and figures
 - `assets/prompts/`: prompt assets
@@ -90,6 +91,18 @@ Generated training artifacts are written under `outputs/`:
 
 - `outputs/runs/...`
 - `outputs/runs_test/...`
+
+Raw outputs are intentionally ignored by Git. Each research phase should export
+its portable CSV, JSON, PDF, PNG, and LaTeX assets to `phase_N/results/`. Create
+a new phase with both locations and starter documentation using:
+
+```bash
+uv run python scripts/scaffold_phase.py 2
+```
+
+This creates the local raw directory `outputs/runs/phase_2/` and the tracked
+paper-results directory `phase_2/results/`. Checkpoints, TensorBoard event files,
+and WAV files remain ignored even if accidentally placed inside a results bundle.
 
 ## Tests
 

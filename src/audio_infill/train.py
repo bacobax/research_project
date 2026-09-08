@@ -7,6 +7,7 @@ import random
 import argparse
 import json
 import logging
+import fnmatch
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -130,6 +131,30 @@ class TrainConfig:
     decoded_loss_n_ffts: Tuple[int, ...] = (512, 1024, 2048)
     decoded_loss_hop_lengths: Tuple[int, ...] = (128, 256, 512)
     decoded_loss_win_lengths: Tuple[int, ...] = (512, 1024, 2048)
+    decoded_loss_log_eps: float = 1e-7  # magnitude floor for the log-magnitude STFT term;
+                                         # d/dx log(x) = 1/x, so a small eps lets near-silent
+                                         # audio (common in low-activity windows) produce
+                                         # gradients as large as 1/eps -- raise this to bound the
+                                         # worst-case gradient from this term if that's a factor
+                                         # in an observed gradient-explosion incident.
+
+    # Multi-song training: extra clean (gap-free) songs sampled alongside the pivot.
+    extra_wavs_dir: Optional[str] = None
+    extra_wavs_glob: str = "*.wav"
+    extra_wavs_exclude: Tuple[str, ...] = ()
+    extra_wavs_limit: Optional[int] = None
+    extra_wav_paths: Tuple[str, ...] = ()
+    song_sampling: str = "duration"
+
+    # Automated early stopping / divergence guard.
+    early_stopping_enabled: bool = False
+    early_stopping_patience: int = 6
+    early_stopping_min_delta: float = 0.0
+    nan_guard_enabled: bool = True
+
+    # Validation-time decoded-audio-quality metrics (SI-SDR, spectral convergence).
+    validation_audio_metrics_enabled: bool = False
+    validation_audio_metrics_max_examples: Optional[int] = None
 
     @property
     def checkpoint_dir(self) -> Path:
@@ -448,6 +473,27 @@ def frame_bounds_to_sample_bounds(
     start_sample = min(max(0, start_sample), total_samples - 1)
     end_sample = min(max(start_sample + 1, end_sample), total_samples)
     return start_sample, end_sample
+
+
+def audio_metric_crop_bounds(seq_len: int, mask_start: int, mask_len: int, margin_frames: int) -> Tuple[int, int]:
+    """Frame bounds of a gap+margin crop, clamped to the window. `margin_frames=0` gives the
+    gap span alone; `margin_frames=cfg.decoded_loss_margin_frames` matches the crop used by
+    `_compute_decoded_domain_loss` and Phase 0's `decode_gap_crop_audio`."""
+    lo = max(0, int(mask_start) - int(margin_frames))
+    hi = min(int(seq_len), int(mask_start) + int(mask_len) + int(margin_frames))
+    return lo, hi
+
+
+def si_sdr_db(pred: np.ndarray, target: np.ndarray, eps: float = 1e-9) -> float:
+    """Scale-invariant SDR in dB. Ported verbatim from `phase_0/common.py:si_sdr_db` — kept as a
+    plain function here (not imported) since `phase_0` imports *from* this module."""
+    pred = np.asarray(pred, dtype=np.float64)
+    target = np.asarray(target, dtype=np.float64)
+    n = min(len(pred), len(target))
+    pred, target = pred[:n], target[:n]
+    alpha = float(np.dot(pred, target)) / (float(np.dot(target, target)) + eps)
+    e = pred - alpha * target
+    return float(10.0 * np.log10((np.mean((alpha * target) ** 2) + eps) / (np.mean(e**2) + eps)))
 
 
 def extract_contiguous_mask_bounds(loss_mask: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -1406,6 +1452,91 @@ class ActivityAwareMaskedSpanDataset(Dataset):
 MaskedSpanDataset = ActivityAwareMaskedSpanDataset
 
 
+class MultiSongMaskedSpanDataset(Dataset):
+    """Samples training windows across several per-song `ActivityAwareMaskedSpanDataset`s.
+
+    Each sub-dataset keeps its own per-song activity thresholds, valid window starts, and
+    mask-span placement logic untouched (see that class for the actual sampling policy) — this
+    wrapper only decides which song a given draw comes from, then delegates. `__getitem__`
+    ignores `idx` on the sub-datasets exactly as the single-song dataset does, so plain
+    delegation is safe.
+    """
+
+    def __init__(
+        self,
+        datasets: List[ActivityAwareMaskedSpanDataset],
+        song_weights: np.ndarray,
+        virtual_size: int = 50_000,
+    ):
+        if not datasets:
+            raise ValueError("MultiSongMaskedSpanDataset requires at least one sub-dataset")
+        if len(datasets) != len(song_weights):
+            raise ValueError("datasets and song_weights must have the same length")
+        self.datasets = datasets
+        self.virtual_size = int(virtual_size)
+
+        weights = np.clip(np.asarray(song_weights, dtype=np.float32), 1e-9, None)
+        weights = weights / weights.sum()
+        self.song_weights = weights
+        self.song_weights_t = torch.from_numpy(weights)
+
+        starts_per_song = [len(ds.starts) for ds in datasets]
+        count_weights = [max(1, n) for n in starts_per_song]
+        self.summary: Dict[str, Any] = {
+            "num_songs": len(datasets),
+            "total_valid_starts": int(sum(starts_per_song)),
+            "avg_window_activity": float(
+                np.average(
+                    [ds.summary.get("avg_window_activity", 0.0) for ds in datasets],
+                    weights=count_weights,
+                )
+            ),
+            "min_window_weight": float(min(ds.summary.get("min_window_weight", 0.0) for ds in datasets)),
+            "max_window_weight": float(max(ds.summary.get("max_window_weight", 0.0) for ds in datasets)),
+        }
+        for i, n in enumerate(starts_per_song):
+            self.summary[f"song_{i}_starts"] = int(n)
+            self.summary[f"song_{i}_weight"] = float(weights[i])
+
+    def __len__(self) -> int:
+        return self.virtual_size
+
+    def _sample_song_index(self) -> int:
+        return int(torch.multinomial(self.song_weights_t, 1, replacement=True).item())
+
+    def __getitem__(self, idx: int):
+        i = self._sample_song_index()
+        return self.datasets[i][idx]
+
+    @property
+    def mask_len_range(self) -> Tuple[int, int]:
+        return self.datasets[0].mask_len_range
+
+    def update_mask_range(self, mask_min: int, mask_max: int):
+        """Fan out curriculum-learning mask-range updates to every sub-dataset."""
+        for ds in self.datasets:
+            ds.update_mask_range(mask_min, mask_max)
+
+    def pop_recent_metrics(self, max_items: Optional[int] = None) -> List[Dict[str, float]]:
+        """Merge recently-sampled window/mask metrics across sub-datasets.
+
+        Note: like the single-song dataset, each sub-dataset's metrics deque lives in whichever
+        process filled it, so under `num_workers > 0` this mostly returns empty in the main
+        process — pre-existing behavior, unrelated to multi-song support.
+        """
+        items: List[Dict[str, float]] = []
+        remaining = max_items
+        for ds in self.datasets:
+            take = None if remaining is None else max(0, remaining)
+            batch = ds.pop_recent_metrics(take)
+            items.extend(batch)
+            if remaining is not None:
+                remaining -= len(batch)
+                if remaining <= 0:
+                    break
+        return items
+
+
 class _CodebookInfillerBase(nn.Module):
     def __init__(
         self,
@@ -1727,6 +1858,39 @@ class MultiResolutionSTFTLoss(nn.Module):
         }
 
 
+def resolve_extra_wav_paths(cfg: TrainConfig) -> List[Path]:
+    """Resolve the list of extra (clean, gap-free) training wavs from `cfg`.
+
+    Deterministic and sort-stable so that regimes built with different `extra_wavs_limit`
+    values are nested subsets of each other (e.g. limit=3 is a prefix of the full list) — this
+    is what makes a data-scaling sweep comparable across regimes.
+    """
+    if cfg.extra_wav_paths:
+        paths = [Path(p) for p in cfg.extra_wav_paths]
+        for p in paths:
+            if not p.exists():
+                raise FileNotFoundError(f"extra_wav_paths entry not found: {p}")
+        return paths
+
+    if not cfg.extra_wavs_dir:
+        return []
+
+    wavs_dir = Path(cfg.extra_wavs_dir)
+    if not wavs_dir.is_dir():
+        raise FileNotFoundError(f"extra_wavs_dir not found or not a directory: {wavs_dir}")
+
+    candidates = sorted(wavs_dir.glob(cfg.extra_wavs_glob))
+    exclude_patterns = list(cfg.extra_wavs_exclude or ())
+    if exclude_patterns:
+        candidates = [
+            p for p in candidates
+            if not any(fnmatch.fnmatch(p.name, pat) for pat in exclude_patterns)
+        ]
+    if cfg.extra_wavs_limit is not None:
+        candidates = candidates[: cfg.extra_wavs_limit]
+    return candidates
+
+
 class Trainer:
     def __init__(self, cfg: TrainConfig):
         self.cfg = cfg
@@ -1750,6 +1914,11 @@ class Trainer:
         self.global_step = 0
         self.best_loss = float("inf")
         self.best_val_loss = float("inf")
+
+        # Early stopping / divergence guard state.
+        self._val_no_improve_count = 0
+        self.early_stop_triggered = False
+        self.diverged = False
 
         # Curriculum state
         if cfg.curriculum:
@@ -1812,6 +1981,7 @@ class Trainer:
         gap_start_s: float,
         gap_end_s: float,
         ann: Optional[dict] = None,
+        has_gaps: bool = True,
     ) -> Dict[str, Any]:
         import soundfile as sf
         import librosa
@@ -1836,19 +2006,23 @@ class Trainer:
             activity_low_quantile=self.cfg.activity_low_quantile,
             activity_high_quantile=self.cfg.activity_high_quantile,
         )
-        gaps_f = self._resolve_gap_frames(
-            frames=int(codes.shape[1]),
-            duration_s=duration_s,
-            gap_start_s=gap_start_s,
-            gap_end_s=gap_end_s,
-            ann=ann,
-        )
+        if has_gaps:
+            gaps_f = self._resolve_gap_frames(
+                frames=int(codes.shape[1]),
+                duration_s=duration_s,
+                gap_start_s=gap_start_s,
+                gap_end_s=gap_end_s,
+                ann=ann,
+            )
+        else:
+            gaps_f = []
         fps = codes.shape[1] / max(duration_s, 1e-9)
         for i, (g0, g1) in enumerate(gaps_f):
             gap_dur = (g1 - g0) / fps
             logger.info("  Gap %d: frames [%d, %d) = %.2fs", i, g0, g1, gap_dur)
 
         return {
+            "wav_path": wav_path,
             "wav": wav,
             "duration_s": duration_s,
             "codes": codes,
@@ -1901,9 +2075,60 @@ class Trainer:
         self.gap_f0 = self.gaps_f[0][0]
         self.gap_f1 = self.gaps_f[0][1]
 
+        # Extra clean (gap-free) songs trained on alongside the pivot sample above. These never
+        # touch self.wav/self.codes/self.gaps_f/... (the pivot's attributes, used by validation,
+        # inpainting, and phase_0's Trainer reconstruction) — they only feed _build_dataset.
+        self.pivot_wav_path = cfg.wav_path
+        extra_paths = resolve_extra_wav_paths(cfg)
+        self.extra_samples: List[Dict[str, Any]] = []
+        for p in extra_paths:
+            self.extra_samples.append(
+                self._load_audio_sample(
+                    wav_path=str(p),
+                    target_sr=cfg.target_sr,
+                    gap_start_s=0.0,
+                    gap_end_s=0.0,
+                    ann=None,
+                    has_gaps=False,
+                )
+            )
+        if self.extra_samples:
+            total_extra_s = sum(s["duration_s"] for s in self.extra_samples)
+            logger.info(
+                "Loaded %d extra training song(s), %.1fs (%.1f min) total, alongside pivot %.1fs",
+                len(self.extra_samples), total_extra_s, total_extra_s / 60.0, self.duration_s,
+            )
+        self._write_songs_manifest(extra_paths)
+
+    def _write_songs_manifest(self, extra_paths: List[Path]):
+        """Record which songs this run trained on, for provenance (mirrors the annotation JSON
+        already saved by the dataset-generation step)."""
+        manifest = {
+            "pivot": {
+                "wav_path": self.pivot_wav_path,
+                "duration_s": self.duration_s,
+                "frames": self.frames,
+                "gaps_f": self.gaps_f,
+            },
+            "extra_songs": [
+                {
+                    "wav_path": s["wav_path"],
+                    "duration_s": s["duration_s"],
+                    "frames": s["frames"],
+                }
+                for s in self.extra_samples
+            ],
+            "song_sampling": self.cfg.song_sampling,
+        }
+        try:
+            with open(Path(self.cfg.output_dir) / self.cfg.run_name / "songs.json", "w", encoding="utf-8") as f:
+                json.dump(manifest, f, indent=2)
+        except OSError as e:
+            logger.warning("Could not write songs.json manifest: %s", e)
+
     def _build_dataset(self):
         cfg = self.cfg
-        self.dataset = ActivityAwareMaskedSpanDataset(
+        pivot_dataset = ActivityAwareMaskedSpanDataset(
             codes=self.codes,
             gaps=self.gaps_f,
             seq_len=cfg.seq_len,
@@ -1926,6 +2151,54 @@ class Trainer:
             mask_stride=cfg.mask_stride,
             activity_guided_masking=cfg.activity_guided_masking,
         )
+
+        if not self.extra_samples:
+            # No extra songs: keep the exact single-song construction, byte-identical to every
+            # run before multi-song support existed.
+            self.dataset = pivot_dataset
+        else:
+            datasets = [pivot_dataset]
+            starts_counts = [len(pivot_dataset.starts)]
+            for sample in self.extra_samples:
+                ds = ActivityAwareMaskedSpanDataset(
+                    codes=sample["codes"],
+                    gaps=[],  # clean songs: no absolute gaps to exclude
+                    seq_len=cfg.seq_len,
+                    mask_len_range=(cfg.mask_len_min, cfg.mask_len_max),
+                    mask_token=self.mask_token,
+                    activity_per_frame=sample["activity_per_frame"],
+                    token_change_per_frame=sample["token_change_per_frame"],
+                    activity_low_thr=sample["activity_low_thr"],
+                    activity_high_thr=sample["activity_high_thr"],
+                    weighted_sampling=cfg.weighted_sampling,
+                    dead_window_min_mean=cfg.dead_window_min_mean,
+                    dead_window_min_ratio=cfg.dead_window_min_ratio,
+                    regime_probs={
+                        "active": cfg.regime_active_prob,
+                        "transition": cfg.regime_transition_prob,
+                        "low_activity": cfg.regime_low_prob,
+                        "uniform": cfg.regime_uniform_prob,
+                    },
+                    blocked_ranges=[],  # only the pivot has a validation holdout to protect
+                    mask_stride=cfg.mask_stride,
+                    activity_guided_masking=cfg.activity_guided_masking,
+                )
+                datasets.append(ds)
+                starts_counts.append(len(ds.starts))
+
+            if cfg.song_sampling == "uniform":
+                song_weights = np.ones(len(datasets), dtype=np.float32)
+            else:  # "duration" (default): proportional to valid window starts, i.e. usable
+                   # training material per song, so short tracks aren't over-weighted and this
+                   # behaves like sampling from one long concatenated song.
+                song_weights = np.asarray(starts_counts, dtype=np.float32)
+
+            self.dataset = MultiSongMaskedSpanDataset(
+                datasets=datasets,
+                song_weights=song_weights,
+                virtual_size=pivot_dataset.virtual_size,
+            )
+
         self.dataloader = DataLoader(
             self.dataset,
             batch_size=cfg.batch_size,
@@ -1936,6 +2209,11 @@ class Trainer:
         )
         if hasattr(self.dataset, "summary"):
             logger.info("Dataset sampling summary: %s", self.dataset.summary)
+            self.writer.add_scalar("dataset/num_songs", float(1 + len(self.extra_samples)), 0)
+            total_frames = self.frames + sum(s["frames"] for s in self.extra_samples)
+            total_minutes = (self.duration_s + sum(s["duration_s"] for s in self.extra_samples)) / 60.0
+            self.writer.add_scalar("dataset/total_frames", float(total_frames), 0)
+            self.writer.add_scalar("dataset/total_minutes", total_minutes, 0)
             for key, value in self.dataset.summary.items():
                 if isinstance(value, (int, float)):
                     self.writer.add_scalar(f"dataset/{key}", float(value), 0)
@@ -2045,6 +2323,25 @@ class Trainer:
             for key, value in dataset.summary.items():
                 self.writer.add_scalar(f"validation/{group_name}_{key}", float(value), 0)
 
+        self.validation_audio_targets: Dict[str, List[Dict[str, np.ndarray]]] = {}
+        if cfg.validation_audio_metrics_enabled:
+            margin = int(cfg.decoded_loss_margin_frames)
+            for group_name, items in loader_examples.items():
+                targets: List[Dict[str, np.ndarray]] = []
+                for ex in items:
+                    seq_len = int(ex.y.shape[1])
+                    lo_m, hi_m = audio_metric_crop_bounds(seq_len, ex.mask_start, ex.mask_len, margin)
+                    lo_g, hi_g = audio_metric_crop_bounds(seq_len, ex.mask_start, ex.mask_len, 0)
+                    targets.append({
+                        "margin": self._decode_validation_window_audio(ex.y[:, lo_m:hi_m]),
+                        "gap_only": self._decode_validation_window_audio(ex.y[:, lo_g:hi_g]),
+                    })
+                self.validation_audio_targets[group_name] = targets
+            logger.info(
+                "Cached target audio crops for validation audio-quality metrics (%d groups).",
+                len(self.validation_audio_targets),
+            )
+
     def _build_model(self):
         cfg = self.cfg
         model_cls = EncoderDecoderCodebookInfiller if cfg.use_encoder_decoder else JointCodebookInfiller
@@ -2088,7 +2385,11 @@ class Trainer:
         cfg = self.cfg
         self.decoded_loss_enabled = bool(cfg.decoded_loss_enabled and cfg.decoded_loss_weight > 0)
         self.decoded_stft_loss: Optional[MultiResolutionSTFTLoss] = None
-        if not self.decoded_loss_enabled:
+        # The STFT-loss module is shared between the training-time decoded loss and the
+        # validation-time audio-quality metrics (Section 2) — either flag can request it, but
+        # only cfg.decoded_loss_enabled gates whether it's actually added to the training loss.
+        needs_stft_module = self.decoded_loss_enabled or cfg.validation_audio_metrics_enabled
+        if not needs_stft_module:
             return
         if getattr(self.encoder.model, "normalize", False):
             raise NotImplementedError(
@@ -2100,16 +2401,24 @@ class Trainer:
             win_lengths=cfg.decoded_loss_win_lengths,
             spectral_convergence_weight=cfg.decoded_loss_spectral_convergence_weight,
             log_magnitude_weight=cfg.decoded_loss_log_magnitude_weight,
+            eps=cfg.decoded_loss_log_eps,
         )
-        logger.info(
-            "Decoded-domain loss enabled (hard argmax path): weight=%.4f every=%d start=%d max_items=%d margin_frames=%d temperature=%.3f (parsed, unused)",
-            cfg.decoded_loss_weight,
-            cfg.decoded_loss_every,
-            cfg.decoded_loss_start_step,
-            cfg.decoded_loss_max_items,
-            cfg.decoded_loss_margin_frames,
-            cfg.decoded_loss_temperature,
-        )
+        if self.decoded_loss_enabled:
+            logger.info(
+                "Decoded-domain loss enabled (hard argmax path): weight=%.4f every=%d start=%d max_items=%d margin_frames=%d temperature=%.3f (parsed, unused)",
+                cfg.decoded_loss_weight,
+                cfg.decoded_loss_every,
+                cfg.decoded_loss_start_step,
+                cfg.decoded_loss_max_items,
+                cfg.decoded_loss_margin_frames,
+                cfg.decoded_loss_temperature,
+            )
+        if cfg.validation_audio_metrics_enabled:
+            logger.info(
+                "Validation audio-quality metrics enabled: SI-SDR + spectral convergence, "
+                "margin-included (margin_frames=%d) and gap-only variants.",
+                cfg.decoded_loss_margin_frames,
+            )
 
     # --- Curriculum learning ---
 
@@ -2364,6 +2673,73 @@ class Trainer:
         filled = example.y.clone()
         filled[:, example.loss_mask] = pred[:, example.loss_mask]
         return filled
+
+    def _spectral_convergence(self, pred_audio: np.ndarray, target_audio: np.ndarray) -> float:
+        """Spectral convergence via self.decoded_stft_loss, zero-padded up to the largest STFT
+        window if the crop is shorter (the gap-only, margin=0 crop can be as short as one
+        EnCodec frame = 320 samples, well under a 2048-sample win_length) — matches
+        phase_0/common.py's stft_metrics padding safeguard."""
+        if self.decoded_stft_loss is None:
+            return float("nan")
+        pred_t = torch.from_numpy(np.asarray(pred_audio, dtype=np.float32)).unsqueeze(0)
+        tgt_t = torch.from_numpy(np.asarray(target_audio, dtype=np.float32)).unsqueeze(0)
+        n = min(pred_t.shape[1], tgt_t.shape[1])
+        pred_t, tgt_t = pred_t[:, :n], tgt_t[:, :n]
+        min_len = max(self.decoded_stft_loss.win_lengths)
+        if n < min_len:
+            pad = min_len - n
+            pred_t = F.pad(pred_t, (0, pad))
+            tgt_t = F.pad(tgt_t, (0, pad))
+        with torch.no_grad():
+            out = self.decoded_stft_loss(pred_t, tgt_t)
+        return float(out["spectral_convergence"].item())
+
+    @torch.no_grad()
+    def _compute_validation_audio_metrics(
+        self, group_name: str, examples: List[FixedValidationExample]
+    ) -> Dict[str, float]:
+        """Decoded-audio SI-SDR / spectral convergence for one validation group, both
+        margin-included (comparable to Phase 0's exp03/exp04) and gap-only (margin=0, more
+        directly sensitive to fill quality — see the plan's note on margin dilution). Reuses
+        `_predict_validation_window` per example (simpler and already tested, versus threading
+        batched logits through from the token-CE loop — the added cost is negligible, ~1-5s per
+        validation call total)."""
+        max_examples = self.cfg.validation_audio_metrics_max_examples
+        if max_examples is not None:
+            examples = examples[: int(max_examples)]
+        targets = self.validation_audio_targets.get(group_name, [])
+        margin = int(self.cfg.decoded_loss_margin_frames)
+
+        si_sdr_margin: List[float] = []
+        si_sdr_gap: List[float] = []
+        sc_margin: List[float] = []
+        sc_gap: List[float] = []
+        for idx, ex in enumerate(examples):
+            if idx >= len(targets):
+                break
+            filled = self._predict_validation_window(ex)
+            seq_len = int(ex.y.shape[1])
+            lo_m, hi_m = audio_metric_crop_bounds(seq_len, ex.mask_start, ex.mask_len, margin)
+            lo_g, hi_g = audio_metric_crop_bounds(seq_len, ex.mask_start, ex.mask_len, 0)
+            pred_margin = self._decode_validation_window_audio(filled[:, lo_m:hi_m])
+            pred_gap = self._decode_validation_window_audio(filled[:, lo_g:hi_g])
+            target_margin = targets[idx]["margin"]
+            target_gap = targets[idx]["gap_only"]
+
+            si_sdr_margin.append(si_sdr_db(pred_margin, target_margin))
+            si_sdr_gap.append(si_sdr_db(pred_gap, target_gap))
+            sc_margin.append(self._spectral_convergence(pred_margin, target_margin))
+            sc_gap.append(self._spectral_convergence(pred_gap, target_gap))
+
+        def _mean(values: List[float]) -> float:
+            return float(np.mean(values)) if values else float("nan")
+
+        return {
+            "si_sdr_db": _mean(si_sdr_margin),
+            "si_sdr_db_gap_only": _mean(si_sdr_gap),
+            "spectral_convergence": _mean(sc_margin),
+            "spectral_convergence_gap_only": _mean(sc_gap),
+        }
 
     def _save_validation_artifacts(
         self,
@@ -2647,19 +3023,106 @@ class Trainer:
 
         combined_loss = float(np.mean([band_results["high_activity"]["loss"], band_results["low_activity"]["loss"]]))
         self.writer.add_scalar("val/combined_loss", combined_loss, step)
+
+        if self.cfg.validation_audio_metrics_enabled:
+            self._run_validation_audio_metrics(step, group_specs)
+
         self._log_validation_inspection(step)
         self.model.train()
 
-        if combined_loss < self.best_val_loss:
+        improved = combined_loss < self.best_val_loss
+        if improved:
             self.best_val_loss = combined_loss
             self.save_checkpoint("best_val")
+
+        self.early_stop_triggered = self._update_early_stopping(improved, combined_loss, step)
 
         result = {
             "combined_loss": combined_loss,
             "high_loss": band_results["high_activity"]["loss"],
             "low_loss": band_results["low_activity"]["loss"],
+            "early_stop": self.early_stop_triggered,
         }
         return result
+
+    _AUDIO_METRIC_KEYS = ("si_sdr_db", "si_sdr_db_gap_only", "spectral_convergence", "spectral_convergence_gap_only")
+
+    def _run_validation_audio_metrics(self, step: int, group_specs: Dict[str, "ValidationGroupSpec"]) -> None:
+        """Decoded-audio SI-SDR / spectral convergence, logged per group/band/combined with the
+        same aggregation convention as the token-loss metrics above: count-weighted mean across
+        groups within a band, then an unweighted mean of the two band means for the combined
+        `val/*` scalar. Reporting-only — does not affect checkpoint selection or early stopping."""
+        band_audio_totals: Dict[str, Dict[str, float]] = {
+            "high_activity": {**{k: 0.0 for k in self._AUDIO_METRIC_KEYS}, "count": 0.0},
+            "low_activity": {**{k: 0.0 for k in self._AUDIO_METRIC_KEYS}, "count": 0.0},
+        }
+        max_examples = self.cfg.validation_audio_metrics_max_examples
+        for group_name, loader in self.validation_dataloaders.items():
+            spec = group_specs.get(group_name, ValidationGroupSpec(band=group_name, mask_len=None))
+            examples = loader.dataset.examples
+            metrics = self._compute_validation_audio_metrics(group_name, examples)
+            count = len(examples) if max_examples is None else min(len(examples), int(max_examples))
+
+            prefix_root = "high" if spec.band == "high_activity" else "low"
+            prefix = f"val/{prefix_root}" if spec.mask_len is None else f"val/{prefix_root}_len_{spec.mask_len}"
+            for key, value in metrics.items():
+                self.writer.add_scalar(f"{prefix}_{key}", value, step)
+                if math.isfinite(value):
+                    band_audio_totals[spec.band][key] += value * count
+            band_audio_totals[spec.band]["count"] += count
+
+        band_audio_results: Dict[str, Dict[str, float]] = {}
+        for band, totals in band_audio_totals.items():
+            count = max(1.0, totals["count"])
+            band_audio_results[band] = {key: totals[key] / count for key in self._AUDIO_METRIC_KEYS}
+            prefix = "val/high" if band == "high_activity" else "val/low"
+            for key, value in band_audio_results[band].items():
+                self.writer.add_scalar(f"{prefix}_{key}", value, step)
+
+        for key in self._AUDIO_METRIC_KEYS:
+            combined_value = float(np.mean([band_audio_results["high_activity"][key], band_audio_results["low_activity"][key]]))
+            self.writer.add_scalar(f"val/{key}", combined_value, step)
+
+    def _update_early_stopping(self, improved: bool, combined_loss: float, step: int) -> bool:
+        """Track consecutive meaningfully-non-improving validation checks; return True once
+        training should stop. Base criterion matches what was used by hand to kill the two
+        completed single-song runs ("zero sign of improvement across 6 consecutive eval
+        checkpoints"), with one refinement: `early_stopping_min_delta` gives a tolerance band
+        around the best loss so far. A check that lands within that band of the best (but isn't
+        itself a new best) is treated as noise, not degradation — it neither resets nor advances
+        the patience counter. Only a check that's *meaningfully* worse than the best counts
+        against patience. This matters because validation runs on only 64 examples, so small
+        fluctuations around a genuinely flat loss are expected and shouldn't be indistinguishable
+        from real, sustained degradation."""
+        if not self.cfg.early_stopping_enabled:
+            return False
+        if improved:
+            self._val_no_improve_count = 0
+            return False
+        min_delta = self.cfg.early_stopping_min_delta
+        if combined_loss <= self.best_val_loss + min_delta:
+            logger.info(
+                "Validation at step %d within tolerance of best (combined_loss=%.4f, best=%.4f, "
+                "min_delta=%.4f) - not counted against patience (%d/%d)",
+                step, combined_loss, self.best_val_loss, min_delta,
+                self._val_no_improve_count, self.cfg.early_stopping_patience,
+            )
+            return False
+        self._val_no_improve_count += 1
+        logger.info(
+            "Validation did not improve at step %d: combined_loss=%.4f vs best=%.4f "
+            "(%d/%d consecutive non-improving checks)",
+            step, combined_loss, self.best_val_loss,
+            self._val_no_improve_count, self.cfg.early_stopping_patience,
+        )
+        if self._val_no_improve_count >= self.cfg.early_stopping_patience:
+            logger.warning(
+                "Early stopping at step %d: val/combined_loss has not improved for %d "
+                "consecutive validation checks (every %d steps).",
+                step, self._val_no_improve_count, self.cfg.validation_every,
+            )
+            return True
+        return False
 
     def save_checkpoint(self, tag: str = "latest"):
         path = self.cfg.checkpoint_dir / f"{tag}.pt"
@@ -2795,6 +3258,17 @@ class Trainer:
                     step=step,
                 )
 
+            if cfg.nan_guard_enabled and not torch.isfinite(total_loss):
+                logger.error(
+                    "Training loss became non-finite at step %d (total_loss=%s) - stopping "
+                    "immediately without applying this update, to avoid corrupting the model "
+                    "with a NaN/Inf gradient step.",
+                    step, total_loss.detach().item() if total_loss.numel() == 1 else "non-scalar",
+                )
+                self.diverged = True
+                self.save_checkpoint("latest")
+                break
+
             self.optimizer.zero_grad(set_to_none=True)
             self.scaler.scale(total_loss).backward()
             self.scaler.unscale_(self.optimizer)
@@ -2913,21 +3387,29 @@ class Trainer:
 
             if self.validation_enabled and cfg.validation_every > 0 and step % cfg.validation_every == 0:
                 self.run_validation(step)
+                if self.early_stop_triggered:
+                    self.save_checkpoint("latest")
+                    break
 
             if cfg.test_fill_every > 0 and step % cfg.test_fill_every == 0:
-                logger.info("Running test inpaint (all gaps) at step %d", step)
-                wav_filled = self.inpaint_all_gaps()
-                self.log_spectrograms(wav_filled)
+                logger.info("Running test inpaint (gap crops only) at step %d", step)
+                self.inpaint_all_gaps(save_crop_samples=True)
                 self.model.train()
 
         self.save_checkpoint("final")
         self.writer.close()
+        if getattr(self, "diverged", False):
+            logger.warning("Training stopped early at step %d: loss diverged (non-finite).", self.global_step)
+        elif getattr(self, "early_stop_triggered", False):
+            logger.warning("Training stopped early at step %d: early stopping triggered.", self.global_step)
         logger.info("Training complete. Best loss: %.4f", self.best_loss)
 
     # --- Inpainting ---
 
     @torch.no_grad()
-    def inpaint_all_gaps(self, output_path: Optional[str] = None) -> np.ndarray:
+    def inpaint_all_gaps(
+        self, output_path: Optional[str] = None, save_crop_samples: bool = False
+    ) -> Optional[np.ndarray]:
         """Inpaint ALL gaps sequentially.
 
         For each gap:
@@ -2937,7 +3419,12 @@ class Trainer:
         4) Run iterative refinement
         5) Write predicted tokens back into codes
 
-        Returns the reconstructed wav as a numpy array.
+        Returns the reconstructed wav as a numpy array — unless `save_crop_samples` is True, in
+        which case the (expensive, ~400s) whole-song decode is skipped entirely; instead, right
+        after each gap's context window is filled, just that window is decoded and saved (a
+        small wav + a comparison figure), and this returns None. Used for periodic in-training
+        snapshots (`test_fill_every`) so they cost a handful of ~6s crop decodes instead of one
+        full-song decode+save every call.
         """
         cfg = self.cfg
         self.model.eval()
@@ -2984,6 +3471,28 @@ class Trainer:
 
             # Write back
             codes_filled[:, L:R] = xb[0].cpu()
+
+            if save_crop_samples:
+                orig_crop = self._decode_validation_window_audio(self.codes[:, L:R])
+                filled_crop = self._decode_validation_window_audio(codes_filled[:, L:R])
+                wav_path = cfg.samples_dir / f"gap{i}_step_{self.global_step}.wav"
+                save_waveform(wav_path, filled_crop, cfg.target_sr)
+                fig = make_log_spectrogram_comparison_figure(
+                    target_audio=orig_crop,
+                    pred_audio=filled_crop,
+                    sr=cfg.target_sr,
+                    title_prefix=f"gap{i} frames[{g0},{g1}) step={self.global_step}",
+                )
+                self.writer.add_figure(f"audio/gap{i}_comparison", fig, self.global_step)
+                plt.close(fig)
+
+        if save_crop_samples:
+            self.writer.flush()
+            logger.info(
+                "Saved %d gap-crop sample(s) at step %d (samples_dir=%s)",
+                len(self.gaps_f), self.global_step, cfg.samples_dir,
+            )
+            return None
 
         wav_filled = self.encoder.decode(codes_filled, self.scale)
 
@@ -3072,7 +3581,7 @@ def _set_cfg_field(cfg: TrainConfig, key: str, value: Any, source: str):
     if not hasattr(cfg, name):
         logger.warning("Ignoring unknown config key from %s: %s", source, key)
         return
-    if name in {"betas", "validation_mask_lengths"} and isinstance(value, list):
+    if name in {"betas", "validation_mask_lengths", "extra_wavs_exclude", "extra_wav_paths"} and isinstance(value, list):
         value = tuple(value)
     setattr(cfg, name, value)
 
@@ -3242,9 +3751,42 @@ def parse_args(argv: Optional[List[str]] = None):
     parser.add_argument("--decoded-loss-stft-weight", type=float, default=None)
     parser.add_argument("--decoded-loss-spectral-convergence-weight", type=float, default=None)
     parser.add_argument("--decoded-loss-log-magnitude-weight", type=float, default=None)
+    parser.add_argument("--decoded-loss-log-eps", type=float, default=None,
+                        help="Magnitude floor for the log-magnitude STFT term (raise to bound its gradient near silence)")
     parser.add_argument("--decoded-loss-n-ffts", nargs="+", type=int, default=None)
     parser.add_argument("--decoded-loss-hop-lengths", nargs="+", type=int, default=None)
     parser.add_argument("--decoded-loss-win-lengths", nargs="+", type=int, default=None)
+
+    parser.add_argument("--extra-wavs-dir", type=str, default=None,
+                        help="Directory of additional clean (gap-free) wavs to train on alongside the pivot sample")
+    parser.add_argument("--extra-wavs-glob", type=str, default=None)
+    parser.add_argument("--extra-wavs-exclude", nargs="+", type=str, default=None,
+                        help="fnmatch patterns (against filename) to exclude from --extra-wavs-dir")
+    parser.add_argument("--extra-wavs-limit", type=int, default=None,
+                        help="Take only the first N extra wavs (sorted); combine with a fixed sort order for nested subsets")
+    parser.add_argument("--extra-wav-paths", nargs="+", type=str, default=None,
+                        help="Explicit list of extra wav paths; overrides --extra-wavs-dir when set")
+    parser.add_argument("--song-sampling", choices=["duration", "uniform"], default=None)
+
+    parser.add_argument("--early-stopping-enabled", dest="early_stopping_enabled", action="store_true",
+                        help="Stop training once val/combined_loss hasn't improved for --early-stopping-patience consecutive validation checks")
+    parser.add_argument("--no-early-stopping-enabled", dest="early_stopping_enabled", action="store_false")
+    parser.set_defaults(early_stopping_enabled=None)
+    parser.add_argument("--early-stopping-patience", type=int, default=None,
+                        help="Consecutive non-improving validation checks before stopping")
+    parser.add_argument("--early-stopping-min-delta", type=float, default=None,
+                        help="Validation checks within this margin of the best combined_loss don't count against patience")
+    parser.add_argument("--nan-guard-enabled", dest="nan_guard_enabled", action="store_true",
+                        help="Stop immediately (without applying the update) if the training loss becomes non-finite")
+    parser.add_argument("--no-nan-guard-enabled", dest="nan_guard_enabled", action="store_false")
+    parser.set_defaults(nan_guard_enabled=None)
+
+    parser.add_argument("--validation-audio-metrics-enabled", dest="validation_audio_metrics_enabled", action="store_true",
+                        help="Compute decoded-audio SI-SDR/spectral-convergence (margin-included and gap-only) during validation")
+    parser.add_argument("--no-validation-audio-metrics-enabled", dest="validation_audio_metrics_enabled", action="store_false")
+    parser.set_defaults(validation_audio_metrics_enabled=None)
+    parser.add_argument("--validation-audio-metrics-max-examples", type=int, default=None,
+                        help="Cap the number of validation examples scored per call (default: all)")
 
     args = parser.parse_args(argv)
 
@@ -3331,9 +3873,22 @@ def parse_args(argv: Optional[List[str]] = None):
         "decoded_loss_stft_weight": args.decoded_loss_stft_weight,
         "decoded_loss_spectral_convergence_weight": args.decoded_loss_spectral_convergence_weight,
         "decoded_loss_log_magnitude_weight": args.decoded_loss_log_magnitude_weight,
+        "decoded_loss_log_eps": args.decoded_loss_log_eps,
         "decoded_loss_n_ffts": tuple(args.decoded_loss_n_ffts) if args.decoded_loss_n_ffts is not None else None,
         "decoded_loss_hop_lengths": tuple(args.decoded_loss_hop_lengths) if args.decoded_loss_hop_lengths is not None else None,
         "decoded_loss_win_lengths": tuple(args.decoded_loss_win_lengths) if args.decoded_loss_win_lengths is not None else None,
+        "extra_wavs_dir": args.extra_wavs_dir,
+        "extra_wavs_glob": args.extra_wavs_glob,
+        "extra_wavs_exclude": tuple(args.extra_wavs_exclude) if args.extra_wavs_exclude is not None else None,
+        "extra_wavs_limit": args.extra_wavs_limit,
+        "extra_wav_paths": tuple(args.extra_wav_paths) if args.extra_wav_paths is not None else None,
+        "song_sampling": args.song_sampling,
+        "early_stopping_enabled": args.early_stopping_enabled,
+        "early_stopping_patience": args.early_stopping_patience,
+        "early_stopping_min_delta": args.early_stopping_min_delta,
+        "nan_guard_enabled": args.nan_guard_enabled,
+        "validation_audio_metrics_enabled": args.validation_audio_metrics_enabled,
+        "validation_audio_metrics_max_examples": args.validation_audio_metrics_max_examples,
     }
     for key, value in cli_overrides.items():
         if value is not None:

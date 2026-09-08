@@ -1,0 +1,43 @@
+{
+  "pivot": {
+    "wav_path": "data/processed/nuvole_bianche_short_gaps/nuvole_bianche_multigap_4x_15ms_20ms_30ms_50ms.wav",
+    "duration_s": 400.2191666666667,
+    "frames": 30017,
+    "gaps_f": [
+      [
+        3164,
+        3167
+      ],
+      [
+        4275,
+        4276
+      ],
+      [
+        7427,
+        7429
+      ],
+      [
+        22279,
+        22280
+      ]
+    ]
+  },
+  "extra_songs": [
+    {
+      "wav_path": "dataset/001_Einaudi_Le_Onde.wav",
+      "duration_s": 323.9855,
+      "frames": 24299
+    },
+    {
+      "wav_path": "dataset/002_Ludovico_Einaudi_-_Nefeli_Visualiser.wav",
+      "duration_s": 251.49866666666668,
+      "frames": 18863
+    },
+    {
+      "wav_path": "dataset/003_Einaudi_Melodia_Africana_III.wav",
+      "duration_s": 258.8473333333333,
+      "frames": 19414
+    }
+  ],
+  "song_sampling": "duration"
+}
