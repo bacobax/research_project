@@ -27,6 +27,12 @@ samples/
 *.pt
 events.out.tfevents.*
 
+# Portable phase results belong in phase_N/results/ and are intentionally
+# tracked. Keep heavyweight artifacts excluded even if they are copied there.
+phase_[0-9]*/results/**/*.pt
+phase_[0-9]*/results/**/*.wav
+phase_[0-9]*/results/**/events.out.tfevents.*
+
 # Temporary files
 *.log
 *.tmp
@@ -44,6 +50,7 @@ events.out.tfevents.*
 
 
 /data/
+/dataset/
 
 # Phase 0 experiment scratch space and any generated audio (raw results JSON/CSV/MD are kept)
 phase_0/results/scratch/
