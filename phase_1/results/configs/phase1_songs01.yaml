@@ -28,10 +28,10 @@ weight_decay: 0.01
 betas: [0.9, 0.95]
 grad_clip: 1.5
 warmup_steps: 7000
-total_steps: 250000
+total_steps: 100000
 
 log_every: 1000
-save_every: 250000
+save_every: 100000
 test_fill_every: 50000
 
 validation_every: 10000
@@ -96,8 +96,11 @@ decoded_loss_n_ffts: [512, 1024, 2048]
 decoded_loss_hop_lengths: [128, 256, 512]
 decoded_loss_win_lengths: [512, 1024, 2048]
 
-early_stopping_enabled: true
-early_stopping_patience: 6
+early_stopping_enabled: false   # re-run without patience: run the full budget or until NaN
 nan_guard_enabled: true
 
+validation_audio_metrics_enabled: true
+validation_audio_metrics_max_examples: null
+
 # Phase 1 data-scaling regime: 1 song (pivot only). No extra_wavs_dir set.
+# Re-run (no patience): total_steps=100000, given.
