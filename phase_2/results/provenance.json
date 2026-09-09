@@ -1,0 +1,70 @@
+{
+  "export_command": "uv run python phase_2/export_results.py --runs phase2_regularization --input-root outputs/runs/phase2_regularization --output-root phase_2/results",
+  "generated_from_artifacts_at_utc": "2026-09-09T18:45:02.377962Z",
+  "git_commit": "67da8b96cf02b615bb8eb944cff0bfc481513632",
+  "git_status_relevant": [
+    "?? configs/train/phase2_regularization.yaml"
+  ],
+  "runs": {
+    "phase2_regularization": {
+      "best_val_step": 25000,
+      "raw_artifacts": [
+        {
+          "path": "outputs/runs/phase2_regularization/phase2_regularization/tb/events.out.tfevents.1788942477.Cthulhu.540229.0",
+          "sha256": "258a5abcda4c51f68ad1e7a52db64692c1e2c815f79f16c4ba30e20323afb6c4",
+          "size_bytes": 647571095
+        },
+        {
+          "path": "outputs/runs/phase2_regularization/phase2_regularization/tb/events.out.tfevents.1788942477.Cthulhu.540229.1",
+          "sha256": "0bba66493980aff83fb5c017906dc3aa209ecf5606c63f9464ba840cb94a3eac",
+          "size_bytes": 5607
+        },
+        {
+          "path": "outputs/runs/phase2_regularization/phase2_regularization/tb/events.out.tfevents.1788979494.Cthulhu.540229.2",
+          "sha256": "35102a486a88ad379da3b33ce7d5a1796c1e17d1e25e4325a647737a92f9dd13",
+          "size_bytes": 656697
+        },
+        {
+          "path": "outputs/runs/phase2_regularization/phase2_regularization/checkpoints/best_val.pt",
+          "sha256": "1921c099cf779a023e471be18b505412a5f39601e8a3c45723f8adaac1bd3764",
+          "size_bytes": 49269874
+        },
+        {
+          "path": "outputs/runs/phase2_regularization/phase2_regularization/checkpoints/final.pt",
+          "sha256": "c6427606f2007b674000e4066b1659eda7cbe376b02d4ee1232fdb2e30cc7b91",
+          "size_bytes": 49239591
+        },
+        {
+          "path": "outputs/runs/phase2_regularization/phase2_regularization/launch.log",
+          "sha256": "fa1414f9f50d2b33ba0b303adb3d62710705735535af34078d38ce52f30db759",
+          "size_bytes": 112482738
+        },
+        {
+          "path": "outputs/runs/phase2_regularization/phase2_regularization/songs.json",
+          "sha256": "f5cdab5197a58598c34e36677479b7fa10afd35186b7d397115ca5e7900a6e0e",
+          "size_bytes": 440
+        }
+      ],
+      "stop_step": 600000
+    }
+  },
+  "schema_version": 1,
+  "source_files": {
+    "pyproject.toml": {
+      "sha256": "67329dd5f067e112675194286fce2d6809357195290f37656b67c548ac963f65",
+      "size_bytes": 726
+    },
+    "src/audio_infill/config.py": {
+      "sha256": "a39da726e7099b1e771c04300f32656ca4f62e328c5c152986e3c532b0e5c6fb",
+      "size_bytes": 29921
+    },
+    "src/audio_infill/train.py": {
+      "sha256": "2e87d01b5e3485f5711b85bbf283edfcfec3d8e9fd4d2856073246898b769eea",
+      "size_bytes": 174218
+    },
+    "uv.lock": {
+      "sha256": "1be7996bf6fe465fdf599ec564873cc2d217089ada1fc01270d5f62c13203bd5",
+      "size_bytes": 185078
+    }
+  }
+}
