@@ -1,0 +1,27 @@
+{
+  "pivot": {
+    "wav_path": "data/processed/nuvole_bianche_short_gaps/nuvole_bianche_multigap_4x_15ms_20ms_30ms_50ms.wav",
+    "duration_s": 400.2191666666667,
+    "frames": 30017,
+    "gaps_f": [
+      [
+        3164,
+        3167
+      ],
+      [
+        4275,
+        4276
+      ],
+      [
+        7427,
+        7429
+      ],
+      [
+        22279,
+        22280
+      ]
+    ]
+  },
+  "extra_songs": [],
+  "song_sampling": "duration"
+}

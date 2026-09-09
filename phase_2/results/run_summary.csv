@@ -1,0 +1,2 @@
+run,d_model,n_layers,dropout,weight_decay,total_minutes,model_params_m,best_val_step,best_combined_loss,best_si_sdr_db,best_si_sdr_db_gap_only,best_high_acc_top1,best_low_acc_top1,stop_step,stop_reason,runtime_seconds
+phase2_regularization,128,4,0.3,0.1,6.670319444444445,4.089471817016602,25000,4.993580341339111,10.95864200592041,-8.97684383392334,0.010091145522892475,0.1103515625,600000,completed,37025
