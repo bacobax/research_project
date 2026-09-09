@@ -8,9 +8,9 @@ under `outputs/runs/phase1_data_scaling/` and are intentionally not copied here.
 
 | Songs | Best validation step | Combined NLL | High-activity top-1 | Low-activity top-1 | Stop |
 |---:|---:|---:|---:|---:|---:|
-| 1 | 10,000 | 5.1411 | 0.0075 | 0.0863 | 70,000 (early stopping) |
-| 4 | 20,000 | 5.0735 | 0.0130 | 0.0951 | 130,000 (early stopping) |
-| 17 | 30,000 | 4.9867 | 0.0114 | 0.1071 | 130,000 (early stopping) |
+| 1 | 10,000 | 5.1398 | 0.0075 | 0.0843 | 100,000 (completed) |
+| 4 | 10,000 | 5.0666 | 0.0072 | 0.0918 | 300,000 (completed) |
+| 17 | 950,000 | 4.8695 | 0.0612 | 0.1657 | 1,000,000 (completed) |
 
 The selected checkpoint is the step with the minimum recorded `val/combined_loss`; it is not
 the final checkpoint. These are descriptive results from one seed per condition and should not

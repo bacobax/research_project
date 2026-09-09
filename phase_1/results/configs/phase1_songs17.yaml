@@ -26,12 +26,12 @@ batch_size: 16
 lr: 0.0003
 weight_decay: 0.01
 betas: [0.9, 0.95]
-grad_clip: 1.5
+grad_clip: 1.0   # tightened from 1.5 after a gradient-explosion/NaN incident (see decoded_loss_log_eps below)
 warmup_steps: 7000
-total_steps: 500000
+total_steps: 1000000
 
 log_every: 1000
-save_every: 500000
+save_every: 100000
 test_fill_every: 50000
 
 validation_every: 10000
@@ -52,7 +52,7 @@ num_workers: 2
 output_dir: outputs/runs/phase1_data_scaling
 run_name: phase1_songs17
 seed: 42
-device: cuda:0
+device: cuda:1
 
 resume: null
 inpaint_only: false
@@ -95,11 +95,18 @@ decoded_loss_log_magnitude_weight: 1.0
 decoded_loss_n_ffts: [512, 1024, 2048]
 decoded_loss_hop_lengths: [128, 256, 512]
 decoded_loss_win_lengths: [512, 1024, 2048]
+# Raised from the 1e-7 default: log(clamp_min(x, eps))'s gradient is 1/x, so a tiny eps lets
+# near-silent STFT bins (common in low-activity windows) produce gradients as large as 1/eps
+# (~1e7 at the old default). This run diverged at step 131,549 after ~9,400 steps of grad_norm
+# spikes into the 10^4-10^6 range while grad_clip masked the effect on the loss -- raising this
+# floor bounds that specific term's worst-case gradient at ~1/eps (~1e3 here) instead.
+decoded_loss_log_eps: 0.001
 
-early_stopping_enabled: true
-early_stopping_patience: 10
-early_stopping_min_delta: 0.05
+early_stopping_enabled: false   # re-run without patience: run the full budget or until NaN
 nan_guard_enabled: true
+
+validation_audio_metrics_enabled: true
+validation_audio_metrics_max_examples: null
 
 # Phase 1 data-scaling regime: 17 songs (pivot + all 16 remaining dataset/ tracks).
 # dataset/008_* is excluded: it's a different recording of the pivot composition (Nuvole
@@ -108,3 +115,5 @@ extra_wavs_dir: dataset
 extra_wavs_exclude: ["008_*"]
 extra_wavs_limit: null
 song_sampling: duration
+
+# Re-run (no patience): total_steps=1000000, given.

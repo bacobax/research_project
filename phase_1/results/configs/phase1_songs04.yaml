@@ -28,10 +28,10 @@ weight_decay: 0.01
 betas: [0.9, 0.95]
 grad_clip: 1.5
 warmup_steps: 7000
-total_steps: 500000
+total_steps: 300000
 
 log_every: 1000
-save_every: 500000
+save_every: 100000
 test_fill_every: 50000
 
 validation_every: 10000
@@ -52,7 +52,7 @@ num_workers: 2
 output_dir: outputs/runs/phase1_data_scaling
 run_name: phase1_songs04
 seed: 42
-device: cuda:1
+device: cuda:0
 
 resume: null
 inpaint_only: false
@@ -96,10 +96,11 @@ decoded_loss_n_ffts: [512, 1024, 2048]
 decoded_loss_hop_lengths: [128, 256, 512]
 decoded_loss_win_lengths: [512, 1024, 2048]
 
-early_stopping_enabled: true
-early_stopping_patience: 10
-early_stopping_min_delta: 0.05
+early_stopping_enabled: false   # re-run without patience: run the full budget or until NaN
 nan_guard_enabled: true
+
+validation_audio_metrics_enabled: true
+validation_audio_metrics_max_examples: null
 
 # Phase 1 data-scaling regime: 4 songs (pivot + 3 extras, sorted-prefix of the songs17 regime).
 # dataset/008_* is excluded everywhere: it's a different recording of the pivot composition
@@ -108,3 +109,6 @@ extra_wavs_dir: dataset
 extra_wavs_exclude: ["008_*"]
 extra_wavs_limit: 3
 song_sampling: duration
+
+# Re-run (no patience): total_steps=300000 (geometric interpolation between the 1-song and
+# 17-song budgets given for this sweep).
