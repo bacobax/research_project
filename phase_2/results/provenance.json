@@ -1,10 +1,8 @@
 {
   "export_command": "uv run python phase_2/export_results.py --runs phase2_regularization --input-root outputs/runs/phase2_regularization --output-root phase_2/results",
   "generated_from_artifacts_at_utc": "2026-09-09T18:45:02.377962Z",
-  "git_commit": "67da8b96cf02b615bb8eb944cff0bfc481513632",
-  "git_status_relevant": [
-    "?? configs/train/phase2_regularization.yaml"
-  ],
+  "git_commit": "229b4f97f7c7cc4cecfb71cece333b6813cd1115",
+  "git_status_relevant": [],
   "runs": {
     "phase2_regularization": {
       "best_val_step": 25000,

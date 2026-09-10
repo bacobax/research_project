@@ -33,6 +33,11 @@ phase_[0-9]*/results/**/*.pt
 phase_[0-9]*/results/**/*.wav
 phase_[0-9]*/results/**/events.out.tfevents.*
 
+# Exception: results/audio_samples/ is a small, curated set of real-gap fill examples (a few
+# hundred KB each, one per checkpoint per run -- see scripts/export_gap_audio_samples.py), not a
+# heavyweight artifact dump -- these ARE meant to be tracked.
+!phase_[0-9]*/results/audio_samples/**/*.wav
+
 # Temporary files
 *.log
 *.tmp

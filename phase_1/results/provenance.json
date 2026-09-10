@@ -1,7 +1,7 @@
 {
   "export_command": "uv run python phase_1/export_results.py --runs phase1_songs01 phase1_songs04 phase1_songs17 --input-root outputs/runs/phase1_data_scaling --output-root phase_1/results",
   "generated_from_artifacts_at_utc": "2026-09-09T12:17:47.540977Z",
-  "git_commit": "a331b67d8af753230df60532b391d11083447eaf",
+  "git_commit": "229b4f97f7c7cc4cecfb71cece333b6813cd1115",
   "git_status_relevant": [],
   "runs": {
     "phase1_songs01": {
