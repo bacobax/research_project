@@ -1,0 +1,207 @@
+{
+  "cutoff_step": 300000,
+  "export_command": "uv run python phase_3/export_seed_check.py --cutoff-step 300000 --output-root /home/francesco.bassignana/research_project/phase_3/results/seed_check",
+  "generated_from_artifacts_at_utc": "2026-09-10T10:34:51.495217Z",
+  "git_commit": "229b4f97f7c7cc4cecfb71cece333b6813cd1115",
+  "git_status_relevant": [
+    "?? configs/train/phase3_regularization_seed43.yaml",
+    "?? configs/train/phase3_regularization_seed44.yaml",
+    "?? configs/train/phase3_songs17_seed43.yaml",
+    "?? configs/train/phase3_songs17_seed44.yaml"
+  ],
+  "runs": {
+    "phase1_songs17_seed42": {
+      "best_step_at_cutoff": 260000,
+      "config": "configs/train/phase1_songs17.yaml",
+      "cutoff_step": 300000,
+      "raw_artifacts": [
+        {
+          "path": "outputs/runs/phase1_data_scaling/phase1_songs17/tb/events.out.tfevents.1788894273.Cthulhu.291718.0",
+          "sha256": "3ca2362eae6ec9dfe99f1ad035c3309ae097e1f0ad596fdc5836e1568de7de7b",
+          "size_bytes": 1431587370
+        },
+        {
+          "path": "outputs/runs/phase1_data_scaling/phase1_songs17/tb/events.out.tfevents.1788894273.Cthulhu.291718.1",
+          "sha256": "73b31c6deb8b8667f50e2a352e916a52055e4af28625cab8d2f49f73244db152",
+          "size_bytes": 5647
+        },
+        {
+          "path": "outputs/runs/phase1_data_scaling/phase1_songs17/tb/events.out.tfevents.1788956259.Cthulhu.291718.2",
+          "sha256": "5fc9bf7525f90f0738e86a7979863a5b23f35ce94bb4d481fc20a0737dde93c5",
+          "size_bytes": 656675
+        },
+        {
+          "path": "outputs/runs/phase1_data_scaling/phase1_songs17/checkpoints/best_val.pt",
+          "sha256": "bff153c61cf31a6c26ec30aa8ce118b4cd3e86adb901a80676e2da004c947268",
+          "size_bytes": 142286322
+        },
+        {
+          "path": "outputs/runs/phase1_data_scaling/phase1_songs17/launch.log",
+          "sha256": "e9fc93f1a63fc702c6bd8968cc5c7aebd6a3751ccee7a1aca37f259a7d4f2ca6",
+          "size_bytes": 190537313
+        }
+      ]
+    },
+    "phase1_songs17_seed43": {
+      "best_step_at_cutoff": 20000,
+      "config": "configs/train/phase3_songs17_seed43.yaml",
+      "cutoff_step": 300000,
+      "raw_artifacts": [
+        {
+          "path": "outputs/runs/phase3_seed_check/phase3_songs17_seed43/tb/events.out.tfevents.1788989914.Cthulhu.800248.0",
+          "sha256": "5a56069c6835668489f4b515445450ca75f5fe45748617a2b35e28257a3805a1",
+          "size_bytes": 416153749
+        },
+        {
+          "path": "outputs/runs/phase3_seed_check/phase3_songs17_seed43/tb/events.out.tfevents.1788989914.Cthulhu.800248.1",
+          "sha256": "70033b8b34dfed4af995ff4cf5d151bb170ab46120eb4ddd0b7c1607b1b66007",
+          "size_bytes": 5659
+        },
+        {
+          "path": "outputs/runs/phase3_seed_check/phase3_songs17_seed43/tb/events.out.tfevents.1789014202.Cthulhu.800248.2",
+          "sha256": "faff6cc9c9f358d9e7eef20d53c44a7898e963a8e737fed5b23a74dabd14893b",
+          "size_bytes": 656689
+        },
+        {
+          "path": "outputs/runs/phase3_seed_check/phase3_songs17_seed43/checkpoints/best_val.pt",
+          "sha256": "0408c23625e604497eb59e27e6e348c777cf310cad38264d720cc6e0d248b12f",
+          "size_bytes": 142286322
+        },
+        {
+          "path": "outputs/runs/phase3_seed_check/phase3_songs17_seed43/launch.log",
+          "sha256": "5c8288cad19d9dfbddac190210a0db0e1da1084e8d9ebff3c5d9485672a33c7d",
+          "size_bytes": 58397366
+        }
+      ]
+    },
+    "phase1_songs17_seed44": {
+      "best_step_at_cutoff": 280000,
+      "config": "configs/train/phase3_songs17_seed44.yaml",
+      "cutoff_step": 300000,
+      "raw_artifacts": [
+        {
+          "path": "outputs/runs/phase3_seed_check/phase3_songs17_seed44/tb/events.out.tfevents.1789014214.Cthulhu.918067.0",
+          "sha256": "5d647674f3484384a7ebb0e475a539ec7c40744e2f94507fd72e656202283e00",
+          "size_bytes": 415784993
+        },
+        {
+          "path": "outputs/runs/phase3_seed_check/phase3_songs17_seed44/tb/events.out.tfevents.1789014214.Cthulhu.918067.1",
+          "sha256": "d247b0366ef87cb4df535ca8f1f9391e9012483af9c08dadd4ca31f1491ccb71",
+          "size_bytes": 5659
+        },
+        {
+          "path": "outputs/runs/phase3_seed_check/phase3_songs17_seed44/tb/events.out.tfevents.1789036477.Cthulhu.918067.2",
+          "sha256": "c7121f01cae85545b9ef69029e5bb8d4752fa5e6b6ca149912fe256be7206efe",
+          "size_bytes": 656664
+        },
+        {
+          "path": "outputs/runs/phase3_seed_check/phase3_songs17_seed44/checkpoints/best_val.pt",
+          "sha256": "0b216f6a02ba749a3940e7d3e8993bc6a594340f1bfdc0ac658364c3dada1660",
+          "size_bytes": 142286322
+        },
+        {
+          "path": "outputs/runs/phase3_seed_check/phase3_songs17_seed44/launch.log",
+          "sha256": "7b506362ff521434d81cd3cbd431487d5aa5ee90acf973719962bcb5215df277",
+          "size_bytes": 58202897
+        }
+      ]
+    },
+    "phase2_regularization_seed42": {
+      "best_step_at_cutoff": 25000,
+      "config": "configs/train/phase2_regularization.yaml",
+      "cutoff_step": 300000,
+      "raw_artifacts": [
+        {
+          "path": "outputs/runs/phase2_regularization/phase2_regularization/tb/events.out.tfevents.1788942477.Cthulhu.540229.0",
+          "sha256": "258a5abcda4c51f68ad1e7a52db64692c1e2c815f79f16c4ba30e20323afb6c4",
+          "size_bytes": 647571095
+        },
+        {
+          "path": "outputs/runs/phase2_regularization/phase2_regularization/tb/events.out.tfevents.1788942477.Cthulhu.540229.1",
+          "sha256": "0bba66493980aff83fb5c017906dc3aa209ecf5606c63f9464ba840cb94a3eac",
+          "size_bytes": 5607
+        },
+        {
+          "path": "outputs/runs/phase2_regularization/phase2_regularization/tb/events.out.tfevents.1788979494.Cthulhu.540229.2",
+          "sha256": "35102a486a88ad379da3b33ce7d5a1796c1e17d1e25e4325a647737a92f9dd13",
+          "size_bytes": 656697
+        },
+        {
+          "path": "outputs/runs/phase2_regularization/phase2_regularization/checkpoints/best_val.pt",
+          "sha256": "1921c099cf779a023e471be18b505412a5f39601e8a3c45723f8adaac1bd3764",
+          "size_bytes": 49269874
+        },
+        {
+          "path": "outputs/runs/phase2_regularization/phase2_regularization/launch.log",
+          "sha256": "fa1414f9f50d2b33ba0b303adb3d62710705735535af34078d38ce52f30db759",
+          "size_bytes": 112482738
+        }
+      ]
+    },
+    "phase2_regularization_seed43": {
+      "best_step_at_cutoff": 300000,
+      "config": "configs/train/phase3_regularization_seed43.yaml",
+      "cutoff_step": 300000,
+      "raw_artifacts": [
+        {
+          "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed43/tb/events.out.tfevents.1788989920.Cthulhu.800337.0",
+          "sha256": "1d2df871b751acf3be0fa17d78f882663fee55beaab93ac75ab511f0815fcce8",
+          "size_bytes": 318477327
+        },
+        {
+          "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed43/tb/events.out.tfevents.1788989920.Cthulhu.800337.1",
+          "sha256": "f18eacf3ca9736b35f2d9641d6764a91053af83bdf14adc9398c4800af70881d",
+          "size_bytes": 5617
+        },
+        {
+          "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed43/tb/events.out.tfevents.1789013174.Cthulhu.800337.2",
+          "sha256": "12e7df9a353f49ffdaebdd844627ea57a00be7f51c6de1dc06e10588716c164d",
+          "size_bytes": 656792
+        },
+        {
+          "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed43/checkpoints/best_val.pt",
+          "sha256": "5283656b215581ea2a56734e2a4c337e1b99ce41132de9c2ac155402a6beee6f",
+          "size_bytes": 49269874
+        },
+        {
+          "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed43/launch.log",
+          "sha256": "d50647c766acc87be232a34485e0162b6c62f5f0e4cc7f788921cda091840480",
+          "size_bytes": 57850943
+        }
+      ]
+    },
+    "phase2_regularization_seed44": {
+      "best_step_at_cutoff": 25000,
+      "config": "configs/train/phase3_regularization_seed44.yaml",
+      "cutoff_step": 300000,
+      "raw_artifacts": [
+        {
+          "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed44/tb/events.out.tfevents.1789013185.Cthulhu.914063.0",
+          "sha256": "8e9c203b73c406483f04be690ea2790098d39c56fdff001a44542e58c8f71b92",
+          "size_bytes": 317926628
+        },
+        {
+          "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed44/tb/events.out.tfevents.1789013185.Cthulhu.914063.1",
+          "sha256": "670481ce10a27527b3e53a11f4f9989b9d8f1d691c22feaf7b858ed38790d03b",
+          "size_bytes": 5617
+        },
+        {
+          "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed44/tb/events.out.tfevents.1789035970.Cthulhu.914063.2",
+          "sha256": "5da992cab268b9b7885180e49406f924eed5b327c745a682b1a98b47f66c1cf3",
+          "size_bytes": 656650
+        },
+        {
+          "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed44/checkpoints/best_val.pt",
+          "sha256": "bfece5cb6e9d042069a05a24d494db31140f32c3861ed0b39b07b85f54da8c4a",
+          "size_bytes": 49269874
+        },
+        {
+          "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed44/launch.log",
+          "sha256": "46230f00695d4cc1b9c25ca7b842dee39d4cd98448d51d265d9ba068d9848865",
+          "size_bytes": 58398199
+        }
+      ]
+    }
+  },
+  "schema_version": 1
+}

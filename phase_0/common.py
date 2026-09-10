@@ -42,6 +42,7 @@ from audio_infill.train import (  # noqa: E402
     _region_mean_activity,
     _build_cumsum,
     _valid_non_gap_starts,
+    audio_metric_crop_bounds,
     build_holdout_region_validation_examples,
     candidate_mask_offsets,
     frame_bounds_to_sample_bounds,
@@ -86,24 +87,58 @@ class RecordingWriter:
         return {name: value for name, value, _ in self.scalars}
 
 
+def _checkpoints(run_dir: str, tags: Sequence[str] = ("best_val", "best", "final")) -> Dict[str, Path]:
+    return {tag: REPO_ROOT / f"outputs/runs/{run_dir}/checkpoints/{tag}.pt" for tag in tags}
+
+
 RUNS: Dict[str, Dict[str, Any]] = {
+    # baseline/bigmodel were manually killed (not run to a config total_steps), so they have no
+    # "final" checkpoint -- "latest" is the last one actually saved before the kill.
     "baseline": {
         "config": REPO_ROOT / "configs/train/nuvole_bianche_short_gaps_encoder_decoder.yaml",
-        "checkpoints": {
-            "best_val": REPO_ROOT
-            / "outputs/runs/nuvole_bianche_short_gaps/nuvole_bianche_short_gaps_encoder_decoder/checkpoints/best_val.pt",
-            "best": REPO_ROOT
-            / "outputs/runs/nuvole_bianche_short_gaps/nuvole_bianche_short_gaps_encoder_decoder/checkpoints/best.pt",
-        },
+        "checkpoints": _checkpoints(
+            "nuvole_bianche_short_gaps/nuvole_bianche_short_gaps_encoder_decoder", ("best_val", "best", "latest")
+        ),
     },
     "bigmodel": {
         "config": REPO_ROOT / "configs/train/nuvole_bianche_short_gaps_encoder_decoder_bigmodel.yaml",
-        "checkpoints": {
-            "best_val": REPO_ROOT
-            / "outputs/runs/nuvole_bianche_short_gaps/nuvole_bianche_short_gaps_encoder_decoder_bigmodel/checkpoints/best_val.pt",
-            "best": REPO_ROOT
-            / "outputs/runs/nuvole_bianche_short_gaps/nuvole_bianche_short_gaps_encoder_decoder_bigmodel/checkpoints/best.pt",
-        },
+        "checkpoints": _checkpoints(
+            "nuvole_bianche_short_gaps/nuvole_bianche_short_gaps_encoder_decoder_bigmodel", ("best_val", "best", "latest")
+        ),
+    },
+    # Added for Phase 3's gap-length x activity-band sweep (phase_3/exp01_gap_length_activity_sweep.py)
+    # and the paper-ready gap-audio-sample export (scripts/export_gap_audio_samples.py).
+    "phase1_songs01": {
+        "config": REPO_ROOT / "configs/train/phase1_songs01.yaml",
+        "checkpoints": _checkpoints("phase1_data_scaling/phase1_songs01"),
+    },
+    "phase1_songs04": {
+        "config": REPO_ROOT / "configs/train/phase1_songs04.yaml",
+        "checkpoints": _checkpoints("phase1_data_scaling/phase1_songs04"),
+    },
+    "phase1_songs17": {
+        "config": REPO_ROOT / "configs/train/phase1_songs17.yaml",
+        "checkpoints": _checkpoints("phase1_data_scaling/phase1_songs17"),
+    },
+    "phase2_regularization": {
+        "config": REPO_ROOT / "configs/train/phase2_regularization.yaml",
+        "checkpoints": _checkpoints("phase2_regularization/phase2_regularization"),
+    },
+    "phase3_songs17_seed43": {
+        "config": REPO_ROOT / "configs/train/phase3_songs17_seed43.yaml",
+        "checkpoints": _checkpoints("phase3_seed_check/phase3_songs17_seed43"),
+    },
+    "phase3_songs17_seed44": {
+        "config": REPO_ROOT / "configs/train/phase3_songs17_seed44.yaml",
+        "checkpoints": _checkpoints("phase3_seed_check/phase3_songs17_seed44"),
+    },
+    "phase3_regularization_seed43": {
+        "config": REPO_ROOT / "configs/train/phase3_regularization_seed43.yaml",
+        "checkpoints": _checkpoints("phase3_seed_check/phase3_regularization_seed43"),
+    },
+    "phase3_regularization_seed44": {
+        "config": REPO_ROOT / "configs/train/phase3_regularization_seed44.yaml",
+        "checkpoints": _checkpoints("phase3_seed_check/phase3_regularization_seed44"),
     },
 }
 
@@ -216,17 +251,25 @@ def _validation_build_params(trainer: Trainer) -> Tuple[Tuple[int, ...], int, in
 
 def build_real_validation_examples(
     trainer: Trainer,
+    mask_lengths: Optional[Sequence[int]] = None,
 ) -> Tuple[Dict[str, List[FixedValidationExample]], List[Tuple[int, int]]]:
     """Rebuild the exact same validation example set the real training run used (same seed,
     cfg.seed + 1009, per Trainer._build_validation) -- deterministic, so this reproduces what
-    training actually evaluated on without reading any on-disk artifacts."""
+    training actually evaluated on without reading any on-disk artifacts.
+
+    `mask_lengths`, if given, overrides the run's own cfg.validation_mask_lengths -- e.g.
+    Phase 3's gap-length sweep passes (1,2,4,8,16) to probe lengths never seen in training.
+    Callers that do this must also rebuild validation_audio_targets via
+    build_validation_audio_targets (never reuse Trainer.__init__'s cache once mask_lengths
+    deviates from the run's own config -- see that function's docstring)."""
     cfg = trainer.cfg
-    mask_lengths, region_len_frames, region_min_separation, sample_name = _validation_build_params(trainer)
+    default_mask_lengths, region_len_frames, region_min_separation, sample_name = _validation_build_params(trainer)
+    resolved_mask_lengths = tuple(int(m) for m in mask_lengths) if mask_lengths is not None else default_mask_lengths
     grouped, _, holdout_ranges, _ = build_holdout_region_validation_examples(
         codes=trainer.codes,
         gaps=trainer.gaps_f,
         seq_len=cfg.seq_len,
-        mask_lengths=mask_lengths,
+        mask_lengths=resolved_mask_lengths,
         mask_token=trainer.mask_token,
         activity_per_frame=trainer.activity_per_frame,
         activity_low_thr=trainer.activity_low_thr,
@@ -242,6 +285,45 @@ def build_real_validation_examples(
         dead_window_min_ratio=cfg.dead_window_min_ratio,
     )
     return grouped, holdout_ranges
+
+
+def build_validation_audio_targets(
+    trainer: Trainer,
+    grouped_examples: Dict[str, List[FixedValidationExample]],
+) -> Dict[str, List[Dict[str, np.ndarray]]]:
+    """Mirror Trainer._build_validation's own target-audio caching (train.py ~2326-2339) for an
+    arbitrary grouped_examples dict.
+
+    Required, not optional, whenever grouped_examples was built with mask_lengths different
+    from the run's own cfg.validation_mask_lengths (e.g. via build_real_validation_examples(...,
+    mask_lengths=...)): Trainer.__init__ populates self.validation_audio_targets exactly once,
+    keyed by group name, from the run's own mask_lengths. Trainer._compute_validation_audio_metrics
+    reads that cache via self.validation_audio_targets.get(group_name, []) -- a missing key
+    silently yields NaN metrics for that group (e.g. any "*_len_8"/"*_len_16" group, never
+    cached). Worse, a same-named group can silently collide: build_holdout_region_validation_examples
+    draws examples for each mask length in sequence from one shared random.Random(seed), so
+    requesting (1,2,4,8,16) instead of (1,2,3,4) shifts that draw order (length 3 is skipped,
+    4 now follows 2 instead of 3) -- "high_activity_len_4" then contains *different* underlying
+    examples than what Trainer.__init__ cached targets for, even though the key matches. Reusing
+    the stale cache would silently score the model against the wrong ground truth. Always call
+    this to rebuild targets fresh from the exact grouped_examples just built, and assign the
+    result to trainer.validation_audio_targets before running validation."""
+    cfg = trainer.cfg
+    margin = int(cfg.decoded_loss_margin_frames)
+    loader_examples = {k: v for k, v in grouped_examples.items() if "_len_" in k}
+    targets: Dict[str, List[Dict[str, np.ndarray]]] = {}
+    for group_name, items in loader_examples.items():
+        group_targets: List[Dict[str, np.ndarray]] = []
+        for ex in items:
+            seq_len = int(ex.y.shape[1])
+            lo_m, hi_m = audio_metric_crop_bounds(seq_len, ex.mask_start, ex.mask_len, margin)
+            lo_g, hi_g = audio_metric_crop_bounds(seq_len, ex.mask_start, ex.mask_len, 0)
+            group_targets.append({
+                "margin": trainer._decode_validation_window_audio(ex.y[:, lo_m:hi_m]),
+                "gap_only": trainer._decode_validation_window_audio(ex.y[:, lo_g:hi_g]),
+            })
+        targets[group_name] = group_targets
+    return targets
 
 
 def build_train_region_control_examples(
