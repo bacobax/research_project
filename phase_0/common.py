@@ -148,18 +148,25 @@ RUNS: Dict[str, Dict[str, Any]] = {
 # ---------------------------------------------------------------------------
 
 
-def build_trainer(run_name: str, checkpoint_tag: str) -> Trainer:
+def build_trainer(run_name: str, checkpoint_tag: str, device: str = None) -> Trainer:
     """Reconstruct a Trainer exactly as the real training entry point would (same
     parse_args() path: yaml -> TrainConfig -> annotation loading), then load one
     checkpoint's weights. output_dir/run_name are forced to scratch space *before*
     Trainer.__init__ so its checkpoints/tb/samples directories are never the real ones.
+
+    `device` overrides the run's own config (e.g. "cuda:0", "cpu") without touching the
+    YAML file itself -- that file is shared with the real training entry point, so it
+    should keep whatever device the actual training run used.
     """
     run = RUNS[run_name]
     checkpoint_path = run["checkpoints"][checkpoint_tag]
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"checkpoint not found: {checkpoint_path}")
 
-    cfg, _ = parse_args(["--config", str(run["config"])])
+    argv = ["--config", str(run["config"])]
+    if device is not None:
+        argv += ["--device", device]
+    cfg, _ = parse_args(argv)
     cfg.output_dir = SCRATCH_OUTPUT_DIR
     cfg.run_name = f"{run_name}_{checkpoint_tag}_phase0"
     cfg.validation_inspection_enabled = False

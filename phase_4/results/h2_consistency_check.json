@@ -1,0 +1,179 @@
+[
+  {
+    "comparisons": [
+      {
+        "tag": "val/high_len_1_loss",
+        "h2_reduction": 6.598543748259544,
+        "in_process_reference": 6.599029541015625,
+        "historical_metrics_csv": 6.599029541,
+        "delta_vs_reference": -0.00048579275608062744,
+        "delta_vs_historical": -0.0004857927404557927
+      },
+      {
+        "tag": "val/high_len_1_acc_top1",
+        "h2_reduction": 0.0,
+        "in_process_reference": 0.0,
+        "historical_metrics_csv": 0.0,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/high_len_2_loss",
+        "h2_reduction": 6.8173620868474245,
+        "in_process_reference": 6.81719970703125,
+        "historical_metrics_csv": 6.817199707,
+        "delta_vs_reference": 0.00016237981617450714,
+        "delta_vs_historical": 0.00016237984742417666
+      },
+      {
+        "tag": "val/high_len_2_acc_top1",
+        "h2_reduction": 0.0,
+        "in_process_reference": 0.0,
+        "historical_metrics_csv": 0.0,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/high_len_3_loss",
+        "h2_reduction": 6.761703670024872,
+        "in_process_reference": 6.761627197265625,
+        "historical_metrics_csv": 6.761627197,
+        "delta_vs_reference": 7.647275924682617e-05,
+        "delta_vs_historical": 7.647302487168162e-05
+      },
+      {
+        "tag": "val/high_len_3_acc_top1",
+        "h2_reduction": 0.010416666666666666,
+        "in_process_reference": 0.010416666977107525,
+        "historical_metrics_csv": 0.01041666698,
+        "delta_vs_reference": -3.1044085878340066e-10,
+        "delta_vs_historical": -3.1333333323779744e-10
+      },
+      {
+        "tag": "val/high_len_4_loss",
+        "h2_reduction": 6.696194423362613,
+        "in_process_reference": 6.696006774902344,
+        "historical_metrics_csv": 6.696006775,
+        "delta_vs_reference": 0.0001876484602689743,
+        "delta_vs_historical": 0.00018764836261286888
+      },
+      {
+        "tag": "val/high_len_4_acc_top1",
+        "h2_reduction": 0.01953125,
+        "in_process_reference": 0.01953125,
+        "historical_metrics_csv": 0.01953125,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/high_loss",
+        "h2_reduction": 6.718450982123613,
+        "in_process_reference": 6.718465805053711,
+        "historical_metrics_csv": 6.718465805,
+        "delta_vs_reference": -1.4822930097579956e-05,
+        "delta_vs_historical": -1.4822876386766382e-05
+      },
+      {
+        "tag": "val/high_acc_top1",
+        "h2_reduction": 0.007486979166666666,
+        "in_process_reference": 0.007486979244276881,
+        "historical_metrics_csv": 0.007486979477,
+        "delta_vs_reference": -7.761021512953103e-11,
+        "delta_vs_historical": -3.103333336834657e-10
+      },
+      {
+        "tag": "val/low_len_1_loss",
+        "h2_reduction": 3.276931509375572,
+        "in_process_reference": 3.2768821716308594,
+        "historical_metrics_csv": 3.276882172,
+        "delta_vs_reference": 4.933774471282959e-05,
+        "delta_vs_historical": 4.93373755721116e-05
+      },
+      {
+        "tag": "val/low_len_1_acc_top1",
+        "h2_reduction": 0.09375,
+        "in_process_reference": 0.09375,
+        "historical_metrics_csv": 0.09375,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/low_len_2_loss",
+        "h2_reduction": 3.9569876573514193,
+        "in_process_reference": 3.957063674926758,
+        "historical_metrics_csv": 3.957063675,
+        "delta_vs_reference": -7.601757533848286e-05,
+        "delta_vs_historical": -7.601764858078397e-05
+      },
+      {
+        "tag": "val/low_len_2_acc_top1",
+        "h2_reduction": 0.0703125,
+        "in_process_reference": 0.0703125,
+        "historical_metrics_csv": 0.0703125,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/low_len_3_loss",
+        "h2_reduction": 3.520990318618715,
+        "in_process_reference": 3.52117919921875,
+        "historical_metrics_csv": 3.521179199,
+        "delta_vs_reference": -0.00018888060003519058,
+        "delta_vs_historical": -0.0001888803812852835
+      },
+      {
+        "tag": "val/low_len_3_acc_top1",
+        "h2_reduction": 0.052083333333333336,
+        "in_process_reference": 0.0520833358168602,
+        "historical_metrics_csv": 0.05208333582,
+        "delta_vs_reference": -2.4835268633283114e-09,
+        "delta_vs_historical": -2.486666664247572e-09
+      },
+      {
+        "tag": "val/low_len_4_loss",
+        "h2_reduction": 3.489170420099981,
+        "in_process_reference": 3.4893393516540527,
+        "historical_metrics_csv": 3.489339352,
+        "delta_vs_reference": -0.0001689315540716052,
+        "delta_vs_historical": -0.00016893190001887604
+      },
+      {
+        "tag": "val/low_len_4_acc_top1",
+        "h2_reduction": 0.1171875,
+        "in_process_reference": 0.12109375,
+        "historical_metrics_csv": 0.12109375,
+        "delta_vs_reference": -0.00390625,
+        "delta_vs_historical": -0.00390625
+      },
+      {
+        "tag": "val/low_loss",
+        "h2_reduction": 3.561019976361422,
+        "in_process_reference": 3.561116099357605,
+        "historical_metrics_csv": 3.561116219,
+        "delta_vs_reference": -9.612299618311226e-05,
+        "delta_vs_historical": -9.624263857821447e-05
+      },
+      {
+        "tag": "val/low_acc_top1",
+        "h2_reduction": 0.08333333333333334,
+        "in_process_reference": 0.08430989645421505,
+        "historical_metrics_csv": 0.08430989832,
+        "delta_vs_reference": -0.0009765631208817072,
+        "delta_vs_historical": -0.0009765649866666642
+      },
+      {
+        "tag": "val/combined_loss",
+        "h2_reduction": 5.139735479242518,
+        "in_process_reference": 5.139790952205658,
+        "historical_metrics_csv": 5.139791012,
+        "delta_vs_reference": -5.547296314034611e-05,
+        "delta_vs_historical": -5.553275748226838e-05
+      }
+    ],
+    "max_abs_delta_vs_reference": 0.00390625,
+    "max_abs_delta_vs_historical": 0.00390625,
+    "reference_vs_historical_agreement": 1.196423951022041e-07,
+    "note": "Deltas are within the ~1e-2 nat range expected from fp16-vs-fp32 evaluation precision.",
+    "run": "phase1_songs01"
+  }
+]

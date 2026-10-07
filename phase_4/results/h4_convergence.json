@@ -1,0 +1,23 @@
+[
+  {
+    "run": "phase1_songs01",
+    "eps_bug_clean": true,
+    "n_points": 10,
+    "first_step": 10000,
+    "first_value": 5.139791012,
+    "last_step": 100000,
+    "last_value": 6.171741486,
+    "min_step": 10000,
+    "min_value": 5.139791012,
+    "checkpoint_step": null,
+    "checkpoint_value": null,
+    "best_step_fraction_of_total": 0.1,
+    "tail_slope_nats_per_100k_steps": 1.2141494178181809,
+    "tail_fit_r2": 0.704458191752963,
+    "tail_n_points": 10,
+    "plateau_criterion": "|OLS slope over last N val points| * 1e5 < 0.01 nats AND last value within 1% of running min",
+    "plateaued": false,
+    "still_decreasing": true,
+    "train_val_gap_at_checkpoint": null
+  }
+]
