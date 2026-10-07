@@ -33,6 +33,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("infiller")
 
+# Pre-clip grad-norm threshold above which a training step is counted as a "spike" in the
+# aggregated train/grad_norm_spike_count metric (see Trainer.train). Matches the threshold
+# used to audit the decoded-loss STFT epsilon bug (near-silent bins -> log() gradient blowup).
+GRAD_NORM_SPIKE_THRESHOLD = 100.0
+
 
 @dataclass
 class TrainConfig:
@@ -3215,6 +3220,16 @@ class Trainer:
         running_ppl = 0.0
         running_nll = 0.0
         running_count = 0
+        running_grad_norm_sum = 0.0
+        running_grad_norm_max = 0.0
+        running_grad_norm_spike_count = 0
+        running_grad_norm_nonfinite = False
+        running_decoded_loss_sum = 0.0
+        running_decoded_loss_waveform_l1_sum = 0.0
+        running_decoded_loss_stft_sum = 0.0
+        running_decoded_loss_spectral_convergence_sum = 0.0
+        running_decoded_loss_log_magnitude_sum = 0.0
+        running_decoded_loss_items_sum = 0.0
         t0 = time.time()
         data_iter = iter(self.dataloader)
 
@@ -3293,51 +3308,26 @@ class Trainer:
             running_nll += nll
             running_count += 1
 
-            self.writer.add_scalar("train/loss", loss_val, step)
-            self.writer.add_scalar("train/token_loss", token_loss_val, step)
-            self.writer.add_scalar("train/acc_top1", correct, step)
-            self.writer.add_scalar("train/acc_top5", acc5, step)
-            self.writer.add_scalar("train/ppl", ppl, step)
-            self.writer.add_scalar("train/nll", nll, step)
-            self.writer.add_scalar("train/lr", lr, step)
-            self.writer.add_scalar("train/grad_norm", grad_norm, step)
-            self.writer.add_scalar("train/decoded_loss", decoded_metrics["decoded_loss_total"], step)
-            self.writer.add_scalar("train/decoded_loss_waveform_l1", decoded_metrics["decoded_loss_waveform_l1"], step)
-            self.writer.add_scalar("train/decoded_loss_stft", decoded_metrics["decoded_loss_stft"], step)
-            self.writer.add_scalar(
-                "train/decoded_loss_spectral_convergence",
-                decoded_metrics["decoded_loss_spectral_convergence"],
-                step,
-            )
-            self.writer.add_scalar(
-                "train/decoded_loss_log_magnitude",
-                decoded_metrics["decoded_loss_log_magnitude"],
-                step,
-            )
-            self.writer.add_scalar("train/decoded_loss_items", decoded_metrics["decoded_loss_items"], step)
-
-            if hasattr(self.dataset, "pop_recent_metrics"):
-                sample_metrics = self.dataset.pop_recent_metrics(cfg.batch_size)
+            # Per-step scalars are aggregated here and flushed every cfg.log_every steps
+            # instead of written every step - at long run lengths (hundreds of thousands to
+            # millions of steps) per-step TB scalars are the dominant contributor to on-disk
+            # log size. grad_norm keeps max/spike-count aggregates (not just an average) so
+            # rare single-step gradient spikes are still visible after aggregation.
+            is_grad_norm_finite = math.isfinite(grad_norm)
+            if is_grad_norm_finite:
+                running_grad_norm_sum += grad_norm
+                running_grad_norm_max = max(running_grad_norm_max, grad_norm)
             else:
-                sample_metrics = []
-            if sample_metrics:
-                w_mean = float(np.mean([m["window_mean_activity"] for m in sample_metrics]))
-                w_ratio = float(np.mean([m["window_active_ratio"] for m in sample_metrics]))
-                m_mean = float(np.mean([m["mask_mean_activity"] for m in sample_metrics]))
-                m_ratio = float(np.mean([m["mask_active_ratio"] for m in sample_metrics]))
-                m_regime = float(np.mean([m["mask_regime"] for m in sample_metrics]))
-                self.writer.add_scalar("train/sample_window_mean_activity", w_mean, step)
-                self.writer.add_scalar("train/sample_window_active_ratio", w_ratio, step)
-                self.writer.add_scalar("train/sample_mask_mean_activity", m_mean, step)
-                self.writer.add_scalar("train/sample_mask_active_ratio", m_ratio, step)
-                self.writer.add_scalar("train/sample_mask_regime", m_regime, step)
+                running_grad_norm_nonfinite = True
+            if (not is_grad_norm_finite) or grad_norm > GRAD_NORM_SPIKE_THRESHOLD:
+                running_grad_norm_spike_count += 1
 
-                reg_hist = defaultdict(int)
-                for m in sample_metrics:
-                    reg_hist[int(m["mask_regime"])] += 1
-                total_reg = max(1, len(sample_metrics))
-                for reg_id, reg_name in [(0, "active"), (1, "transition"), (2, "low_activity"), (3, "uniform")]:
-                    self.writer.add_scalar(f"train/sample_mask_regime_frac_{reg_name}", reg_hist[reg_id] / total_reg, step)
+            running_decoded_loss_sum += decoded_metrics["decoded_loss_total"]
+            running_decoded_loss_waveform_l1_sum += decoded_metrics["decoded_loss_waveform_l1"]
+            running_decoded_loss_stft_sum += decoded_metrics["decoded_loss_stft"]
+            running_decoded_loss_spectral_convergence_sum += decoded_metrics["decoded_loss_spectral_convergence"]
+            running_decoded_loss_log_magnitude_sum += decoded_metrics["decoded_loss_log_magnitude"]
+            running_decoded_loss_items_sum += decoded_metrics["decoded_loss_items"]
 
             postfix = dict(loss=f"{loss_val:.4f}", acc=f"{correct:.3f}", ppl=f"{ppl:.1f}", lr=f"{lr:.2e}")
             if cfg.curriculum:
@@ -3368,6 +3358,62 @@ class Trainer:
                 self.writer.add_scalar("train/avg_ppl", avg_ppl, step)
                 self.writer.add_scalar("train/avg_nll", avg_nll, step)
                 self.writer.add_scalar("train/steps_per_sec", steps_per_sec, step)
+                self.writer.add_scalar("train/lr", lr, step)
+
+                finite_count = running_count - (1 if running_grad_norm_nonfinite else 0)
+                avg_grad_norm = running_grad_norm_sum / max(1, finite_count)
+                self.writer.add_scalar("train/grad_norm_avg", avg_grad_norm, step)
+                self.writer.add_scalar("train/grad_norm_max", running_grad_norm_max, step)
+                self.writer.add_scalar("train/grad_norm_spike_count", running_grad_norm_spike_count, step)
+                self.writer.add_scalar(
+                    "train/grad_norm_nonfinite", 1.0 if running_grad_norm_nonfinite else 0.0, step
+                )
+
+                self.writer.add_scalar("train/avg_decoded_loss", running_decoded_loss_sum / running_count, step)
+                self.writer.add_scalar(
+                    "train/avg_decoded_loss_waveform_l1", running_decoded_loss_waveform_l1_sum / running_count, step
+                )
+                self.writer.add_scalar(
+                    "train/avg_decoded_loss_stft", running_decoded_loss_stft_sum / running_count, step
+                )
+                self.writer.add_scalar(
+                    "train/avg_decoded_loss_spectral_convergence",
+                    running_decoded_loss_spectral_convergence_sum / running_count,
+                    step,
+                )
+                self.writer.add_scalar(
+                    "train/avg_decoded_loss_log_magnitude",
+                    running_decoded_loss_log_magnitude_sum / running_count,
+                    step,
+                )
+                self.writer.add_scalar(
+                    "train/avg_decoded_loss_items", running_decoded_loss_items_sum / running_count, step
+                )
+
+                if hasattr(self.dataset, "pop_recent_metrics"):
+                    sample_metrics = self.dataset.pop_recent_metrics()
+                else:
+                    sample_metrics = []
+                if sample_metrics:
+                    w_mean = float(np.mean([m["window_mean_activity"] for m in sample_metrics]))
+                    w_ratio = float(np.mean([m["window_active_ratio"] for m in sample_metrics]))
+                    m_mean = float(np.mean([m["mask_mean_activity"] for m in sample_metrics]))
+                    m_ratio = float(np.mean([m["mask_active_ratio"] for m in sample_metrics]))
+                    m_regime = float(np.mean([m["mask_regime"] for m in sample_metrics]))
+                    self.writer.add_scalar("train/sample_window_mean_activity", w_mean, step)
+                    self.writer.add_scalar("train/sample_window_active_ratio", w_ratio, step)
+                    self.writer.add_scalar("train/sample_mask_mean_activity", m_mean, step)
+                    self.writer.add_scalar("train/sample_mask_active_ratio", m_ratio, step)
+                    self.writer.add_scalar("train/sample_mask_regime", m_regime, step)
+
+                    reg_hist = defaultdict(int)
+                    for m in sample_metrics:
+                        reg_hist[int(m["mask_regime"])] += 1
+                    total_reg = max(1, len(sample_metrics))
+                    for reg_id, reg_name in [(0, "active"), (1, "transition"), (2, "low_activity"), (3, "uniform")]:
+                        self.writer.add_scalar(
+                            f"train/sample_mask_regime_frac_{reg_name}", reg_hist[reg_id] / total_reg, step
+                        )
 
                 if avg_loss < self.best_loss:
                     self.best_loss = avg_loss
@@ -3379,6 +3425,16 @@ class Trainer:
                 running_ppl = 0.0
                 running_nll = 0.0
                 running_count = 0
+                running_grad_norm_sum = 0.0
+                running_grad_norm_max = 0.0
+                running_grad_norm_spike_count = 0
+                running_grad_norm_nonfinite = False
+                running_decoded_loss_sum = 0.0
+                running_decoded_loss_waveform_l1_sum = 0.0
+                running_decoded_loss_stft_sum = 0.0
+                running_decoded_loss_spectral_convergence_sum = 0.0
+                running_decoded_loss_log_magnitude_sum = 0.0
+                running_decoded_loss_items_sum = 0.0
                 t0 = time.time()
 
             if step % cfg.save_every == 0:
