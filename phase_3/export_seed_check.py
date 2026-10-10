@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # ---------------------------------------------------------------------------
 from phase_2.export_results import (  # noqa: E402
     ScalarPoint,
+    _log_info_from_tensorboard,
     _parse_run_log,
     _point_value,
     _run_command,
@@ -156,7 +157,8 @@ def analyze_run_at_cutoff(spec: Mapping[str, Any], cutoff_step: int) -> RunAtCut
     best_point = min(combined, key=lambda p: (p.value, p.step))
     best_step = best_point.step
 
-    log_info = _parse_run_log(run_dir / "launch.log")
+    launch_log = run_dir / "launch.log"
+    log_info = _parse_run_log(launch_log) if launch_log.is_file() else _log_info_from_tensorboard(run_dir, points)
 
     return RunAtCutoff(
         name=spec["name"],

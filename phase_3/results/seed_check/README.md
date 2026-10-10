@@ -12,7 +12,7 @@ regularization alone" contrast, not to restate the headline single-seed results.
 | family | n seeds | seeds | combined NLL | high-activity acc | SI-SDR gap-only (dB) |
 |---|---|---|---|---|---|
 | songs17_data_scaling | 3 | 42,43,44 | 4.9569 ± 0.0568 | 0.0269 ± 0.0205 | -4.49 ± 2.96 |
-| regularization_ablation | 3 | 42,43,44 | 4.9996 ± 0.0167 | 0.0161 ± 0.0057 | -8.41 ± 1.24 |
+| regularization_ablation | 3 | 42,43,44 | 5.0023 ± 0.0198 | 0.0183 ± 0.0077 | -8.55 ± 0.90 |
 
 ## Contents
 

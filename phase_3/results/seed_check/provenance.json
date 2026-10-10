@@ -1,13 +1,11 @@
 {
   "cutoff_step": 300000,
   "export_command": "uv run python phase_3/export_seed_check.py --cutoff-step 300000 --output-root /home/francesco.bassignana/research_project/phase_3/results/seed_check",
-  "generated_from_artifacts_at_utc": "2026-09-10T10:34:51.495217Z",
-  "git_commit": "229b4f97f7c7cc4cecfb71cece333b6813cd1115",
+  "generated_from_artifacts_at_utc": "2026-10-10T11:52:05.263654Z",
+  "git_commit": "7159dfef52fedbfea0e0657bdb3408427b3be1a7",
   "git_status_relevant": [
-    "?? configs/train/phase3_regularization_seed43.yaml",
-    "?? configs/train/phase3_regularization_seed44.yaml",
-    "?? configs/train/phase3_songs17_seed43.yaml",
-    "?? configs/train/phase3_songs17_seed44.yaml"
+    "M configs/train/phase3_regularization_seed43.yaml",
+    " M configs/train/phase3_regularization_seed44.yaml"
   ],
   "runs": {
     "phase1_songs17_seed42": {
@@ -112,29 +110,24 @@
       "cutoff_step": 300000,
       "raw_artifacts": [
         {
-          "path": "outputs/runs/phase2_regularization/phase2_regularization/tb/events.out.tfevents.1788942477.Cthulhu.540229.0",
-          "sha256": "258a5abcda4c51f68ad1e7a52db64692c1e2c815f79f16c4ba30e20323afb6c4",
-          "size_bytes": 647571095
+          "path": "outputs/runs/phase2_regularization/phase2_regularization/tb/events.out.tfevents.1791392152.Cthulhu.1503499.0",
+          "sha256": "1e9c5b0641e2856e47fe9ae682bdd708eded8414fb65633a3a727d1a970b580b",
+          "size_bytes": 155727039
         },
         {
-          "path": "outputs/runs/phase2_regularization/phase2_regularization/tb/events.out.tfevents.1788942477.Cthulhu.540229.1",
-          "sha256": "0bba66493980aff83fb5c017906dc3aa209ecf5606c63f9464ba840cb94a3eac",
+          "path": "outputs/runs/phase2_regularization/phase2_regularization/tb/events.out.tfevents.1791392152.Cthulhu.1503499.1",
+          "sha256": "6d5d7479c16fdabb9675d2eaf13accfff8a419c3338f36e8f5c040d3248bfde2",
           "size_bytes": 5607
         },
         {
-          "path": "outputs/runs/phase2_regularization/phase2_regularization/tb/events.out.tfevents.1788979494.Cthulhu.540229.2",
-          "sha256": "35102a486a88ad379da3b33ce7d5a1796c1e17d1e25e4325a647737a92f9dd13",
-          "size_bytes": 656697
+          "path": "outputs/runs/phase2_regularization/phase2_regularization/tb/events.out.tfevents.1791486668.Cthulhu.1503499.2",
+          "sha256": "4ab7a2f55517b82ebfa9d817f1d8414d02ab321c3f04f9175d4fabbb58ae5169",
+          "size_bytes": 656736
         },
         {
           "path": "outputs/runs/phase2_regularization/phase2_regularization/checkpoints/best_val.pt",
-          "sha256": "1921c099cf779a023e471be18b505412a5f39601e8a3c45723f8adaac1bd3764",
+          "sha256": "4e4b285732bc478e6dfcf6552c1d033cfdff5153b02aa9a0f3ff28bedc0edb7c",
           "size_bytes": 49269874
-        },
-        {
-          "path": "outputs/runs/phase2_regularization/phase2_regularization/launch.log",
-          "sha256": "fa1414f9f50d2b33ba0b303adb3d62710705735535af34078d38ce52f30db759",
-          "size_bytes": 112482738
         }
       ]
     },
@@ -144,29 +137,29 @@
       "cutoff_step": 300000,
       "raw_artifacts": [
         {
-          "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed43/tb/events.out.tfevents.1788989920.Cthulhu.800337.0",
-          "sha256": "1d2df871b751acf3be0fa17d78f882663fee55beaab93ac75ab511f0815fcce8",
-          "size_bytes": 318477327
+          "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed43/tb/events.out.tfevents.1791533805.Cthulhu.1910727.0",
+          "sha256": "49add58dce2bca59cd2d34a2b67ee7cd7fd333fe8286ab880294c42269aa4c38",
+          "size_bytes": 72720896
         },
         {
-          "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed43/tb/events.out.tfevents.1788989920.Cthulhu.800337.1",
-          "sha256": "f18eacf3ca9736b35f2d9641d6764a91053af83bdf14adc9398c4800af70881d",
+          "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed43/tb/events.out.tfevents.1791533805.Cthulhu.1910727.1",
+          "sha256": "01df9f2ec780e454289069e095f9a9cedd54f18158ac90d05af25dd6738f87dc",
           "size_bytes": 5617
         },
         {
-          "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed43/tb/events.out.tfevents.1789013174.Cthulhu.800337.2",
-          "sha256": "12e7df9a353f49ffdaebdd844627ea57a00be7f51c6de1dc06e10588716c164d",
-          "size_bytes": 656792
+          "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed43/tb/events.out.tfevents.1791579968.Cthulhu.1910727.2",
+          "sha256": "1ed69797e393d4743d427cfc80f3ae27d76d116509044adef8b1e848c29bf36b",
+          "size_bytes": 656690
         },
         {
           "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed43/checkpoints/best_val.pt",
-          "sha256": "5283656b215581ea2a56734e2a4c337e1b99ce41132de9c2ac155402a6beee6f",
+          "sha256": "d998a58c2bb0a4e5dbabe8fef8381208b4435efaf05340a34784e951182bbca2",
           "size_bytes": 49269874
         },
         {
           "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed43/launch.log",
-          "sha256": "d50647c766acc87be232a34485e0162b6c62f5f0e4cc7f788921cda091840480",
-          "size_bytes": 57850943
+          "sha256": "35c420eebdf612151ffb67bfab5013e73d44b25f153cbef5d6b85d26ad744ab7",
+          "size_bytes": 40542
         }
       ]
     },
@@ -176,29 +169,29 @@
       "cutoff_step": 300000,
       "raw_artifacts": [
         {
-          "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed44/tb/events.out.tfevents.1789013185.Cthulhu.914063.0",
-          "sha256": "8e9c203b73c406483f04be690ea2790098d39c56fdff001a44542e58c8f71b92",
-          "size_bytes": 317926628
+          "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed44/tb/events.out.tfevents.1791486720.Cthulhu.367564.0",
+          "sha256": "51f21e9b21cff69ae4afa3a88a6784cfe2b9c6d57f31a4070222372959352d38",
+          "size_bytes": 72160477
         },
         {
-          "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed44/tb/events.out.tfevents.1789013185.Cthulhu.914063.1",
-          "sha256": "670481ce10a27527b3e53a11f4f9989b9d8f1d691c22feaf7b858ed38790d03b",
+          "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed44/tb/events.out.tfevents.1791486720.Cthulhu.367564.1",
+          "sha256": "c066c36ebeb20baefcb86c1c9216ebeb012aa0d782ee8fb6c823e937d46e6833",
           "size_bytes": 5617
         },
         {
-          "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed44/tb/events.out.tfevents.1789035970.Cthulhu.914063.2",
-          "sha256": "5da992cab268b9b7885180e49406f924eed5b327c745a682b1a98b47f66c1cf3",
-          "size_bytes": 656650
+          "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed44/tb/events.out.tfevents.1791533781.Cthulhu.367564.2",
+          "sha256": "de56b7b6957c024afbe2cdc1efa4efa92cbd149d78aa2e73a38660f0726a659c",
+          "size_bytes": 656674
         },
         {
           "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed44/checkpoints/best_val.pt",
-          "sha256": "bfece5cb6e9d042069a05a24d494db31140f32c3861ed0b39b07b85f54da8c4a",
+          "sha256": "94923045214180f5e8be24800caca89ea1dfb2be45121fb11e67109cc54d8956",
           "size_bytes": 49269874
         },
         {
           "path": "outputs/runs/phase3_seed_check/phase3_regularization_seed44/launch.log",
-          "sha256": "46230f00695d4cc1b9c25ca7b842dee39d4cd98448d51d265d9ba068d9848865",
-          "size_bytes": 58398199
+          "sha256": "bbcf9330a395424f2d7f9a1a8bef71aab7e0cec69f4e8af9ee64f6b78ba29740",
+          "size_bytes": 40527
         }
       ]
     }

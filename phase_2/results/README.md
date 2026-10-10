@@ -10,7 +10,7 @@ not copied here.
 
 | $d_{model}$ | Dropout | Weight decay | Best validation step | Combined NLL | SI-SDR gap-only (dB) | High-activity top-1 | Low-activity top-1 | Stop |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 128 | 0.3 | 0.1 | 25,000 | 4.9936 | -8.98 | 0.0101 | 0.1104 | 600,000 (completed) |
+| 128 | 0.3 | 0.1 | 25,000 | 4.9951 | -8.67 | 0.0101 | 0.1064 | 600,000 (completed) |
 
 The selected checkpoint is the step with the minimum recorded `val/combined_loss`; it is not
 the final checkpoint. `figures/validation_loss.png` shows the full trajectory, including a late
@@ -26,7 +26,7 @@ should not be presented as an uncertainty estimate.
 - `best_by_group.csv` and `tables/best_by_group.tex`: best-step metrics by activity and gap length.
 - `figures/`: PNG previews and vector PDFs for the paper, including `validation_audio_metrics.*`
   (SI-SDR and spectral convergence, margin-included and gap-only). Qualitative figures:
-  `figures/qualitative_high_activity_len_4.pdf`, `figures/qualitative_low_activity_len_4.pdf`.
+  not generated (source bundles were unavailable).
 - `configs/` and `song_manifests/`: exact per-run input snapshots.
 - `provenance.json`: source hashes plus hashes and locations of every retained raw artifact.
 - `source_state.patch`: tracked runtime-code changes relative to the recorded Git commit.

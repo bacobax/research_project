@@ -9,7 +9,7 @@ under `outputs/runs/phase1_data_scaling/` and are intentionally not copied here.
 | Songs | Best validation step | Combined NLL | High-activity top-1 | Low-activity top-1 | Stop |
 |---:|---:|---:|---:|---:|---:|
 | 1 | 10,000 | 5.1398 | 0.0075 | 0.0843 | 100,000 (completed) |
-| 4 | 10,000 | 5.0666 | 0.0072 | 0.0918 | 300,000 (completed) |
+| 4 | 20,000 | 5.0697 | 0.0173 | 0.0986 | 300,000 (completed) |
 | 17 | 950,000 | 4.8695 | 0.0612 | 0.1657 | 1,000,000 (completed) |
 
 The selected checkpoint is the step with the minimum recorded `val/combined_loss`; it is not
@@ -21,7 +21,7 @@ be presented as uncertainty estimates.
 - `metrics.csv`: exact validation points, 1,000-step training aggregates, and run metadata.
 - `run_summary.csv` and `tables/run_summary.tex`: one row per scaling condition.
 - `best_by_group.csv` and `tables/best_by_group.tex`: best-step metrics by activity and gap length.
-- `figures/`: PNG previews and vector PDFs for the paper. Qualitative figures: `figures/qualitative_high_activity_len_4.pdf`, `figures/qualitative_low_activity_len_4.pdf`.
+- `figures/`: PNG previews and vector PDFs for the paper. Qualitative figures: not generated (source bundles were unavailable).
 - `configs/` and `song_manifests/`: exact per-run input snapshots.
 - `provenance.json`: source hashes plus hashes and locations of every retained raw artifact.
 - `source_state.patch`: tracked runtime-code changes relative to the recorded Git commit.
