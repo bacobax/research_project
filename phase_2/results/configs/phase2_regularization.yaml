@@ -29,7 +29,7 @@ batch_size: 16
 lr: 0.0003
 weight_decay: 0.1
 betas: [0.9, 0.95]
-grad_clip: 1.5
+grad_clip: 1.0   # tightened from 1.5 after a gradient-explosion/NaN incident (see decoded_loss_log_eps below)
 warmup_steps: 7000
 total_steps: 600000
 
@@ -98,6 +98,12 @@ decoded_loss_log_magnitude_weight: 1.0
 decoded_loss_n_ffts: [512, 1024, 2048]
 decoded_loss_hop_lengths: [128, 256, 512]
 decoded_loss_win_lengths: [512, 1024, 2048]
+# Raised from the 1e-7 default: log(clamp_min(x, eps))'s gradient is 1/x, so a tiny eps lets
+# near-silent STFT bins (common in low-activity windows) produce gradients as large as 1/eps
+# (~1e7 at the old default). This run's original pass at eps=1e-7 had grad_norm > 100 on 22.8%
+# of steps -- raising this floor bounds that specific term's worst-case gradient at ~1/eps
+# (~1e3 here) instead. Rerun of this exact config with only this fix + grad_clip above changed.
+decoded_loss_log_eps: 0.001
 
 early_stopping_enabled: false   # no patience, per Phase 2's design
 nan_guard_enabled: true         # stays on -- pure safety net, unrelated to "patience"

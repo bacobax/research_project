@@ -217,9 +217,30 @@ def _parse_run_log(log_path: Path) -> dict[str, Any]:
     }
 
 
+def _log_info_from_tensorboard(run_dir: Path, points: Iterable[ScalarPoint]) -> dict[str, Any]:
+    """Fallback for runs whose stdout log was not saved (e.g. phase2_regularization's rerun).
+
+    Stop state comes from the presence of ``checkpoints/final.pt`` plus the last logged training
+    step; start/finish times come from TensorBoard wall times. Marked ``log_source`` so the
+    provenance is explicit about not coming from a launch log.
+    """
+    pts = [p for p in points if p.tag == "train/avg_loss"] or list(points)
+    if not pts or not (run_dir / "checkpoints" / "final.pt").is_file():
+        raise ValueError(f"Cannot determine completion state for {run_dir.name}: no launch.log and no final.pt/TB data")
+    start = datetime.fromtimestamp(min(p.wall_time for p in pts), tz=timezone.utc)
+    end = datetime.fromtimestamp(max(p.wall_time for p in pts), tz=timezone.utc)
+    return {
+        "stop_reason": "completed",
+        "stop_step": int(max(p.step for p in pts)),
+        "runtime_seconds": int((end - start).total_seconds()),
+        "started_at": start.isoformat().replace("+00:00", "Z"),
+        "finished_at": end.isoformat().replace("+00:00", "Z"),
+        "log_source": "tensorboard_fallback",
+    }
+
+
 def _validate_run(run_dir: Path) -> None:
     required = (
-        run_dir / "launch.log",
         run_dir / "songs.json",
         run_dir / "checkpoints" / "best_val.pt",
         run_dir / "checkpoints" / "final.pt",
@@ -250,7 +271,8 @@ def analyze_run(name: str, run_dir: Path, config: Mapping[str, Any]) -> RunExpor
     songs = _read_json(run_dir / "songs.json")
     song_records = [songs.get("pivot", {})] + list(songs.get("extra_songs", ()))
     total_seconds = sum(float(song.get("duration_s", 0.0)) for song in song_records)
-    log_info = _parse_run_log(run_dir / "launch.log")
+    launch_log = run_dir / "launch.log"
+    log_info = _parse_run_log(launch_log) if launch_log.is_file() else _log_info_from_tensorboard(run_dir, points)
     params_m = _latest_value(points, "model/params_M")
     if params_m is None:
         raise ValueError(f"Run {name} is missing model/params_M")
@@ -567,6 +589,8 @@ def _provenance(
             run.run_dir / "songs.json",
         ]
         for path in candidates:
+            if not path.exists():
+                continue
             stat = path.stat()
             latest_mtime = max(latest_mtime, stat.st_mtime)
             artifacts.append(
