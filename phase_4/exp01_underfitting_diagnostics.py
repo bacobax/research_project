@@ -60,6 +60,9 @@ DIAGNOSTIC_NAMES = ("h1", "h2", "h3", "h4")
 # NOT to have a significant fraction of steps hijacked by the STFT-loss eps=1e-7 bug.
 EPS_BUG_CLEAN = frozenset({
     "phase1_songs01", "phase1_songs17", "phase3_songs17_seed43", "phase3_songs17_seed44",
+    # Phase B reruns (decoded_loss_log_eps=1e-3, grad_clip=1.0). Their grad_norm "spike" rate is a
+    # late-training norm drift past the 100 threshold, not outliers (see phase_4/results/exp02).
+    "phase1_songs04", "phase2_regularization", "phase3_regularization_seed43", "phase3_regularization_seed44",
 })
 
 BINS = 1024
@@ -106,13 +109,21 @@ def _style_axes(ax) -> None:
 def append_summary_rows(rows: List[Dict[str, Any]]) -> None:
     """Same csv.DictWriter logic as c.append_summary_rows, but targets phase_4's own summary.csv
     (with extra columns) -- calling c.append_summary_rows would pollute phase_0/results/ and drop
-    the codebook/gap_pos/layer/head/distance_bin/n columns this phase needs."""
+    the codebook/gap_pos/layer/head/distance_bin/n columns this phase needs.
+
+    Re-running a run replaces that (experiment, run)'s previous rows instead of appending
+    duplicates (plain appending made repeated invocations double-count in any later average)."""
     SUMMARY_CSV.parent.mkdir(parents=True, exist_ok=True)
-    write_header = not SUMMARY_CSV.exists()
-    with open(SUMMARY_CSV, "a", newline="", encoding="utf-8") as f:
+    replaced = {(r["experiment"], r["run"]) for r in rows}
+    kept: List[Dict[str, Any]] = []
+    if SUMMARY_CSV.exists():
+        with open(SUMMARY_CSV, newline="", encoding="utf-8") as f:
+            kept = [r for r in csv.DictReader(f) if (r.get("experiment"), r.get("run")) not in replaced]
+    with open(SUMMARY_CSV, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=SUMMARY_COLUMNS, extrasaction="ignore")
-        if write_header:
-            writer.writeheader()
+        writer.writeheader()
+        for row in kept:
+            writer.writerow(row)
         for row in rows:
             writer.writerow({**{col: "" for col in SUMMARY_COLUMNS}, **row})
 

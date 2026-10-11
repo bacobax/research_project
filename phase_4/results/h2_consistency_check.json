@@ -175,5 +175,1244 @@
     "reference_vs_historical_agreement": 1.196423951022041e-07,
     "note": "Deltas are within the ~1e-2 nat range expected from fp16-vs-fp32 evaluation precision.",
     "run": "phase1_songs01"
+  },
+  {
+    "comparisons": [
+      {
+        "tag": "val/high_len_1_loss",
+        "h2_reduction": 6.266317035537213,
+        "in_process_reference": 6.485221862792969,
+        "historical_metrics_csv": 6.485221863,
+        "delta_vs_reference": -0.21890482725575566,
+        "delta_vs_historical": -0.2189048274627865
+      },
+      {
+        "tag": "val/high_len_1_acc_top1",
+        "h2_reduction": 0.09375,
+        "in_process_reference": 0.109375,
+        "historical_metrics_csv": 0.109375,
+        "delta_vs_reference": -0.015625,
+        "delta_vs_historical": -0.015625
+      },
+      {
+        "tag": "val/high_len_2_loss",
+        "h2_reduction": 6.374518934375374,
+        "in_process_reference": 6.703845977783203,
+        "historical_metrics_csv": 6.703845978,
+        "delta_vs_reference": -0.3293270434078295,
+        "delta_vs_historical": -0.3293270436246267
+      },
+      {
+        "tag": "val/high_len_2_acc_top1",
+        "h2_reduction": 0.0703125,
+        "in_process_reference": 0.0390625,
+        "historical_metrics_csv": 0.0390625,
+        "delta_vs_reference": 0.03125,
+        "delta_vs_historical": 0.03125
+      },
+      {
+        "tag": "val/high_len_3_loss",
+        "h2_reduction": 6.318685185164213,
+        "in_process_reference": 6.498570919036865,
+        "historical_metrics_csv": 6.498570919,
+        "delta_vs_reference": -0.17988573387265205,
+        "delta_vs_historical": -0.17988573383578643
+      },
+      {
+        "tag": "val/high_len_3_acc_top1",
+        "h2_reduction": 0.052083333333333336,
+        "in_process_reference": 0.0416666679084301,
+        "historical_metrics_csv": 0.04166666791,
+        "delta_vs_reference": 0.010416665424903236,
+        "delta_vs_historical": 0.010416665423333332
+      },
+      {
+        "tag": "val/high_len_4_loss",
+        "h2_reduction": 6.57853054755833,
+        "in_process_reference": 6.838471412658691,
+        "historical_metrics_csv": 6.838471413,
+        "delta_vs_reference": -0.2599408651003614,
+        "delta_vs_historical": -0.2599408654416697
+      },
+      {
+        "tag": "val/high_len_4_acc_top1",
+        "h2_reduction": 0.05078125,
+        "in_process_reference": 0.0546875,
+        "historical_metrics_csv": 0.0546875,
+        "delta_vs_reference": -0.00390625,
+        "delta_vs_historical": -0.00390625
+      },
+      {
+        "tag": "val/high_loss",
+        "h2_reduction": 6.3845129256587825,
+        "in_process_reference": 6.631527543067932,
+        "historical_metrics_csv": 6.631527424,
+        "delta_vs_reference": -0.24701461740914965,
+        "delta_vs_historical": -0.24701449834121725
+      },
+      {
+        "tag": "val/high_acc_top1",
+        "h2_reduction": 0.06673177083333334,
+        "in_process_reference": 0.061197916977107525,
+        "historical_metrics_csv": 0.06119791791,
+        "delta_vs_reference": 0.005533853856225818,
+        "delta_vs_historical": 0.005533852923333339
+      },
+      {
+        "tag": "val/low_len_1_loss",
+        "h2_reduction": 2.7796563445590436,
+        "in_process_reference": 2.9251365661621094,
+        "historical_metrics_csv": 2.925136566,
+        "delta_vs_reference": -0.14548022160306573,
+        "delta_vs_historical": -0.1454802214409563
+      },
+      {
+        "tag": "val/low_len_1_acc_top1",
+        "h2_reduction": 0.265625,
+        "in_process_reference": 0.203125,
+        "historical_metrics_csv": 0.203125,
+        "delta_vs_reference": 0.0625,
+        "delta_vs_historical": 0.0625
+      },
+      {
+        "tag": "val/low_len_2_loss",
+        "h2_reduction": 3.302836371876765,
+        "in_process_reference": 3.4589545726776123,
+        "historical_metrics_csv": 3.458954573,
+        "delta_vs_reference": -0.15611820080084726,
+        "delta_vs_historical": -0.15611820112323516
+      },
+      {
+        "tag": "val/low_len_2_acc_top1",
+        "h2_reduction": 0.1796875,
+        "in_process_reference": 0.140625,
+        "historical_metrics_csv": 0.140625,
+        "delta_vs_reference": 0.0390625,
+        "delta_vs_historical": 0.0390625
+      },
+      {
+        "tag": "val/low_len_3_loss",
+        "h2_reduction": 3.084044742087523,
+        "in_process_reference": 3.1014480590820312,
+        "historical_metrics_csv": 3.101448059,
+        "delta_vs_reference": -0.017403316994508256,
+        "delta_vs_historical": -0.017403316912476985
+      },
+      {
+        "tag": "val/low_len_3_acc_top1",
+        "h2_reduction": 0.13020833333333334,
+        "in_process_reference": 0.1510416716337204,
+        "historical_metrics_csv": 0.1510416716,
+        "delta_vs_reference": -0.020833338300387055,
+        "delta_vs_historical": -0.020833338266666668
+      },
+      {
+        "tag": "val/low_len_4_loss",
+        "h2_reduction": 2.90000926918583,
+        "in_process_reference": 2.9440956115722656,
+        "historical_metrics_csv": 2.944095612,
+        "delta_vs_reference": -0.04408634238643572,
+        "delta_vs_historical": -0.04408634281417001
+      },
+      {
+        "tag": "val/low_len_4_acc_top1",
+        "h2_reduction": 0.21875,
+        "in_process_reference": 0.16796875,
+        "historical_metrics_csv": 0.16796875,
+        "delta_vs_reference": 0.05078125,
+        "delta_vs_historical": 0.05078125
+      },
+      {
+        "tag": "val/low_loss",
+        "h2_reduction": 3.0166366819272903,
+        "in_process_reference": 3.1074087023735046,
+        "historical_metrics_csv": 3.107408762,
+        "delta_vs_reference": -0.09077202044621435,
+        "delta_vs_historical": -0.09077208007270965
+      },
+      {
+        "tag": "val/low_acc_top1",
+        "h2_reduction": 0.19856770833333334,
+        "in_process_reference": 0.1656901054084301,
+        "historical_metrics_csv": 0.1656901091,
+        "delta_vs_reference": 0.03287760292490324,
+        "delta_vs_historical": 0.03287759923333333
+      },
+      {
+        "tag": "val/combined_loss",
+        "h2_reduction": 4.700574803793036,
+        "in_process_reference": 4.869468122720718,
+        "historical_metrics_csv": 4.869468212,
+        "delta_vs_reference": -0.16889331892768222,
+        "delta_vs_historical": -0.16889340820696397
+      }
+    ],
+    "max_abs_delta_vs_reference": 0.3293270434078295,
+    "max_abs_delta_vs_historical": 0.3293270436246267,
+    "reference_vs_historical_agreement": 1.190679324025723e-07,
+    "note": "LARGER THAN EXPECTED (max |delta|=0.329 nats): H2's fp32 batch-of-1 cells differ from BOTH the in-process fp16 reference and the historical fp16 metrics.csv, while reference and historical agree with each other to <1.2e-07 nats. That rules out a batch-size or dataset-construction bug in H2's reduction -- this is a genuine fp16-autocast-vs-fp32 evaluation-precision effect on this checkpoint, large enough to be worth reporting on its own (comparable in scale to the data-scaling headline effect sizes), not something to wave away as noise.",
+    "run": "phase1_songs17"
+  },
+  {
+    "comparisons": [
+      {
+        "tag": "val/high_len_1_loss",
+        "h2_reduction": 6.425461273640394,
+        "in_process_reference": 6.425506591796875,
+        "historical_metrics_csv": 6.425506592,
+        "delta_vs_reference": -4.5318156480789185e-05,
+        "delta_vs_historical": -4.531835960541741e-05
+      },
+      {
+        "tag": "val/high_len_1_acc_top1",
+        "h2_reduction": 0.015625,
+        "in_process_reference": 0.015625,
+        "historical_metrics_csv": 0.015625,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/high_len_2_loss",
+        "h2_reduction": 6.515971202403307,
+        "in_process_reference": 6.516510009765625,
+        "historical_metrics_csv": 6.51651001,
+        "delta_vs_reference": -0.0005388073623180389,
+        "delta_vs_historical": -0.0005388075966932249
+      },
+      {
+        "tag": "val/high_len_2_acc_top1",
+        "h2_reduction": 0.0234375,
+        "in_process_reference": 0.0234375,
+        "historical_metrics_csv": 0.0234375,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/high_len_3_loss",
+        "h2_reduction": 6.479509728650252,
+        "in_process_reference": 6.479512691497803,
+        "historical_metrics_csv": 6.479512691,
+        "delta_vs_reference": -2.962847550413983e-06,
+        "delta_vs_historical": -2.962349747726023e-06
+      },
+      {
+        "tag": "val/high_len_3_acc_top1",
+        "h2_reduction": 0.010416666666666666,
+        "in_process_reference": 0.010416666977107525,
+        "historical_metrics_csv": 0.01041666698,
+        "delta_vs_reference": -3.1044085878340066e-10,
+        "delta_vs_historical": -3.1333333323779744e-10
+      },
+      {
+        "tag": "val/high_len_4_loss",
+        "h2_reduction": 6.516563307493925,
+        "in_process_reference": 6.51678466796875,
+        "historical_metrics_csv": 6.516784668,
+        "delta_vs_reference": -0.0002213604748249054,
+        "delta_vs_historical": -0.00022136050607457491
+      },
+      {
+        "tag": "val/high_len_4_acc_top1",
+        "h2_reduction": 0.01953125,
+        "in_process_reference": 0.01953125,
+        "historical_metrics_csv": 0.01953125,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/high_loss",
+        "h2_reduction": 6.48437637804697,
+        "in_process_reference": 6.484578490257263,
+        "historical_metrics_csv": 6.484578609,
+        "delta_vs_reference": -0.00020211221029331483,
+        "delta_vs_historical": -0.00020223095302984717
+      },
+      {
+        "tag": "val/high_acc_top1",
+        "h2_reduction": 0.017252604166666664,
+        "in_process_reference": 0.01725260424427688,
+        "historical_metrics_csv": 0.01725260355,
+        "delta_vs_reference": -7.761021686425451e-11,
+        "delta_vs_historical": 6.166666656481912e-10
+      },
+      {
+        "tag": "val/low_len_1_loss",
+        "h2_reduction": 3.3771461753058247,
+        "in_process_reference": 3.377253532409668,
+        "historical_metrics_csv": 3.377253532,
+        "delta_vs_reference": -0.00010735710384324193,
+        "delta_vs_historical": -0.00010735669417538674
+      },
+      {
+        "tag": "val/low_len_1_acc_top1",
+        "h2_reduction": 0.140625,
+        "in_process_reference": 0.140625,
+        "historical_metrics_csv": 0.140625,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/low_len_2_loss",
+        "h2_reduction": 4.077288043685257,
+        "in_process_reference": 4.077373504638672,
+        "historical_metrics_csv": 4.077373505,
+        "delta_vs_reference": -8.546095341444016e-05,
+        "delta_vs_historical": -8.546131474229668e-05
+      },
+      {
+        "tag": "val/low_len_2_acc_top1",
+        "h2_reduction": 0.046875,
+        "in_process_reference": 0.046875,
+        "historical_metrics_csv": 0.046875,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/low_len_3_loss",
+        "h2_reduction": 3.6543264367307224,
+        "in_process_reference": 3.6541926860809326,
+        "historical_metrics_csv": 3.654192686,
+        "delta_vs_reference": 0.0001337506497898211,
+        "delta_vs_historical": 0.00013375073072241506
+      },
+      {
+        "tag": "val/low_len_3_acc_top1",
+        "h2_reduction": 0.09375,
+        "in_process_reference": 0.09375,
+        "historical_metrics_csv": 0.09375,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/low_len_4_loss",
+        "h2_reduction": 3.5106765251548495,
+        "in_process_reference": 3.510655403137207,
+        "historical_metrics_csv": 3.510655403,
+        "delta_vs_reference": 2.1122017642483115e-05,
+        "delta_vs_historical": 2.1122154849617658e-05
+      },
+      {
+        "tag": "val/low_len_4_acc_top1",
+        "h2_reduction": 0.11328125,
+        "in_process_reference": 0.11328125,
+        "historical_metrics_csv": 0.11328125,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/low_loss",
+        "h2_reduction": 3.6548592952191634,
+        "in_process_reference": 3.65486878156662,
+        "historical_metrics_csv": 3.654868841,
+        "delta_vs_reference": -9.48634745645549e-06,
+        "delta_vs_historical": -9.545780836450746e-06
+      },
+      {
+        "tag": "val/low_acc_top1",
+        "h2_reduction": 0.0986328125,
+        "in_process_reference": 0.0986328125,
+        "historical_metrics_csv": 0.0986328125,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/combined_loss",
+        "h2_reduction": 5.069617836633067,
+        "in_process_reference": 5.0697236359119415,
+        "historical_metrics_csv": 5.069723606,
+        "delta_vs_reference": -0.00010579927887466312,
+        "delta_vs_historical": -0.00010576936693329486
+      }
+    ],
+    "max_abs_delta_vs_reference": 0.0005388073623180389,
+    "max_abs_delta_vs_historical": 0.0005388075966932249,
+    "reference_vs_historical_agreement": 1.1874273653234013e-07,
+    "note": "Deltas are within the ~1e-2 nat range expected from fp16-vs-fp32 evaluation precision.",
+    "run": "phase1_songs04"
+  },
+  {
+    "comparisons": [
+      {
+        "tag": "val/high_len_1_loss",
+        "h2_reduction": 6.487463887780905,
+        "in_process_reference": 6.48736572265625,
+        "historical_metrics_csv": 6.487365723,
+        "delta_vs_reference": 9.81651246547699e-05,
+        "delta_vs_historical": 9.816478090485248e-05
+      },
+      {
+        "tag": "val/high_len_1_acc_top1",
+        "h2_reduction": 0.015625,
+        "in_process_reference": 0.015625,
+        "historical_metrics_csv": 0.015625,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/high_len_2_loss",
+        "h2_reduction": 6.755863916128874,
+        "in_process_reference": 6.75531005859375,
+        "historical_metrics_csv": 6.755310059,
+        "delta_vs_reference": 0.0005538575351238251,
+        "delta_vs_historical": 0.0005538571288736804
+      },
+      {
+        "tag": "val/high_len_2_acc_top1",
+        "h2_reduction": 0.0,
+        "in_process_reference": 0.0,
+        "historical_metrics_csv": 0.0,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/high_len_3_loss",
+        "h2_reduction": 6.5606725451846915,
+        "in_process_reference": 6.560699462890625,
+        "historical_metrics_csv": 6.560699463,
+        "delta_vs_reference": -2.691770593354903e-05,
+        "delta_vs_historical": -2.6917815308280524e-05
+      },
+      {
+        "tag": "val/high_len_3_acc_top1",
+        "h2_reduction": 0.005208333333333333,
+        "in_process_reference": 0.0052083334885537624,
+        "historical_metrics_csv": 0.005208333489,
+        "delta_vs_reference": -1.5522042939170033e-10,
+        "delta_vs_historical": -1.556666670565754e-10
+      },
+      {
+        "tag": "val/high_len_4_loss",
+        "h2_reduction": 6.4158479364123195,
+        "in_process_reference": 6.416065216064453,
+        "historical_metrics_csv": 6.416065216,
+        "delta_vs_reference": -0.00021727965213358402,
+        "delta_vs_historical": -0.00021727958768025246
+      },
+      {
+        "tag": "val/high_len_4_acc_top1",
+        "h2_reduction": 0.01953125,
+        "in_process_reference": 0.01953125,
+        "historical_metrics_csv": 0.01953125,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/high_loss",
+        "h2_reduction": 6.554962071376697,
+        "in_process_reference": 6.5548601150512695,
+        "historical_metrics_csv": 6.554860115,
+        "delta_vs_reference": 0.00010195632542764343,
+        "delta_vs_historical": 0.00010195637669685453
+      },
+      {
+        "tag": "val/high_acc_top1",
+        "h2_reduction": 0.010091145833333332,
+        "in_process_reference": 0.01009114587213844,
+        "historical_metrics_csv": 0.01009114552,
+        "delta_vs_reference": -3.8805108432127255e-11,
+        "delta_vs_historical": 3.1333333150307396e-10
+      },
+      {
+        "tag": "val/low_len_1_loss",
+        "h2_reduction": 2.9161809099605307,
+        "in_process_reference": 2.9155220985412598,
+        "historical_metrics_csv": 2.915522099,
+        "delta_vs_reference": 0.0006588114192709327,
+        "delta_vs_historical": 0.0006588109605307757
+      },
+      {
+        "tag": "val/low_len_1_acc_top1",
+        "h2_reduction": 0.1875,
+        "in_process_reference": 0.1875,
+        "historical_metrics_csv": 0.1875,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/low_len_2_loss",
+        "h2_reduction": 3.9099465059116483,
+        "in_process_reference": 3.9097938537597656,
+        "historical_metrics_csv": 3.909793854,
+        "delta_vs_reference": 0.00015265215188264847,
+        "delta_vs_historical": 0.0001526519116481495
+      },
+      {
+        "tag": "val/low_len_2_acc_top1",
+        "h2_reduction": 0.0625,
+        "in_process_reference": 0.0625,
+        "historical_metrics_csv": 0.0625,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/low_len_3_loss",
+        "h2_reduction": 3.4262035315235457,
+        "in_process_reference": 3.426121950149536,
+        "historical_metrics_csv": 3.42612195,
+        "delta_vs_reference": 8.15813740095983e-05,
+        "delta_vs_historical": 8.158152354553749e-05
+      },
+      {
+        "tag": "val/low_len_3_acc_top1",
+        "h2_reduction": 0.0625,
+        "in_process_reference": 0.0625,
+        "historical_metrics_csv": 0.0625,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/low_len_4_loss",
+        "h2_reduction": 3.4895230603651726,
+        "in_process_reference": 3.4895877838134766,
+        "historical_metrics_csv": 3.489587784,
+        "delta_vs_reference": -6.472344830399379e-05,
+        "delta_vs_historical": -6.472363482723509e-05
+      },
+      {
+        "tag": "val/low_len_4_acc_top1",
+        "h2_reduction": 0.11328125,
+        "in_process_reference": 0.11328125,
+        "historical_metrics_csv": 0.11328125,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/low_loss",
+        "h2_reduction": 3.4354635019402244,
+        "in_process_reference": 3.4352564215660095,
+        "historical_metrics_csv": 3.435256481,
+        "delta_vs_reference": 0.00020708037421490744,
+        "delta_vs_historical": 0.00020702094022428952
+      },
+      {
+        "tag": "val/low_acc_top1",
+        "h2_reduction": 0.1064453125,
+        "in_process_reference": 0.1064453125,
+        "historical_metrics_csv": 0.1064453125,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/combined_loss",
+        "h2_reduction": 4.995212786658461,
+        "in_process_reference": 4.9950582683086395,
+        "historical_metrics_csv": 4.99505806,
+        "delta_vs_reference": 0.0001545183498210534,
+        "delta_vs_historical": 0.0001547266584607243
+      }
+    ],
+    "max_abs_delta_vs_reference": 0.0006588114192709327,
+    "max_abs_delta_vs_historical": 0.0006588109605307757,
+    "reference_vs_historical_agreement": 2.0830863967091773e-07,
+    "note": "Deltas are within the ~1e-2 nat range expected from fp16-vs-fp32 evaluation precision.",
+    "run": "phase2_regularization"
+  },
+  {
+    "comparisons": [
+      {
+        "tag": "val/high_len_1_loss",
+        "h2_reduction": 7.138903383165598,
+        "in_process_reference": 7.15582275390625,
+        "historical_metrics_csv": 7.155822754,
+        "delta_vs_reference": -0.016919370740652084,
+        "delta_vs_historical": -0.01691937083440198
+      },
+      {
+        "tag": "val/high_len_1_acc_top1",
+        "h2_reduction": 0.0,
+        "in_process_reference": 0.0,
+        "historical_metrics_csv": 0.0,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/high_len_2_loss",
+        "h2_reduction": 6.7746103676036,
+        "in_process_reference": 6.792583465576172,
+        "historical_metrics_csv": 6.792583466,
+        "delta_vs_reference": -0.01797309797257185,
+        "delta_vs_historical": -0.017973098396399934
+      },
+      {
+        "tag": "val/high_len_2_acc_top1",
+        "h2_reduction": 0.0390625,
+        "in_process_reference": 0.046875,
+        "historical_metrics_csv": 0.046875,
+        "delta_vs_reference": -0.0078125,
+        "delta_vs_historical": -0.0078125
+      },
+      {
+        "tag": "val/high_len_3_loss",
+        "h2_reduction": 6.86842004985859,
+        "in_process_reference": 6.861595153808594,
+        "historical_metrics_csv": 6.861595154,
+        "delta_vs_reference": 0.006824896049995921,
+        "delta_vs_historical": 0.006824895858589919
+      },
+      {
+        "tag": "val/high_len_3_acc_top1",
+        "h2_reduction": 0.015625,
+        "in_process_reference": 0.015625,
+        "historical_metrics_csv": 0.015625,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/high_len_4_loss",
+        "h2_reduction": 6.882021195488051,
+        "in_process_reference": 6.884632110595703,
+        "historical_metrics_csv": 6.884632111,
+        "delta_vs_reference": -0.002610915107652545,
+        "delta_vs_historical": -0.0026109155119495853
+      },
+      {
+        "tag": "val/high_len_4_acc_top1",
+        "h2_reduction": 0.015625,
+        "in_process_reference": 0.015625,
+        "historical_metrics_csv": 0.015625,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/high_loss",
+        "h2_reduction": 6.915988749028959,
+        "in_process_reference": 6.92365837097168,
+        "historical_metrics_csv": 6.923658371,
+        "delta_vs_reference": -0.007669621942720362,
+        "delta_vs_historical": -0.007669621971040819
+      },
+      {
+        "tag": "val/high_acc_top1",
+        "h2_reduction": 0.017578125,
+        "in_process_reference": 0.01953125,
+        "historical_metrics_csv": 0.01953125,
+        "delta_vs_reference": -0.001953125,
+        "delta_vs_historical": -0.001953125
+      },
+      {
+        "tag": "val/low_len_1_loss",
+        "h2_reduction": 2.96143548656255,
+        "in_process_reference": 2.982105255126953,
+        "historical_metrics_csv": 2.982105255,
+        "delta_vs_reference": -0.020669768564403057,
+        "delta_vs_historical": -0.020669768437449942
+      },
+      {
+        "tag": "val/low_len_1_acc_top1",
+        "h2_reduction": 0.15625,
+        "in_process_reference": 0.15625,
+        "historical_metrics_csv": 0.15625,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/low_len_2_loss",
+        "h2_reduction": 3.042767117382027,
+        "in_process_reference": 3.0298547744750977,
+        "historical_metrics_csv": 3.029854774,
+        "delta_vs_reference": 0.012912342906929553,
+        "delta_vs_historical": 0.012912343382027291
+      },
+      {
+        "tag": "val/low_len_2_acc_top1",
+        "h2_reduction": 0.1640625,
+        "in_process_reference": 0.15625,
+        "historical_metrics_csv": 0.15625,
+        "delta_vs_reference": 0.0078125,
+        "delta_vs_historical": 0.0078125
+      },
+      {
+        "tag": "val/low_len_3_loss",
+        "h2_reduction": 3.1697161346673965,
+        "in_process_reference": 3.1730144023895264,
+        "historical_metrics_csv": 3.173014402,
+        "delta_vs_reference": -0.0032982677221298218,
+        "delta_vs_historical": -0.0032982673326036327
+      },
+      {
+        "tag": "val/low_len_3_acc_top1",
+        "h2_reduction": 0.109375,
+        "in_process_reference": 0.0885416716337204,
+        "historical_metrics_csv": 0.08854167163,
+        "delta_vs_reference": 0.020833328366279602,
+        "delta_vs_historical": 0.02083332837
+      },
+      {
+        "tag": "val/low_len_4_loss",
+        "h2_reduction": 3.3037701146677136,
+        "in_process_reference": 3.3179492950439453,
+        "historical_metrics_csv": 3.317949295,
+        "delta_vs_reference": -0.01417918037623167,
+        "delta_vs_historical": -0.014179180332286379
+      },
+      {
+        "tag": "val/low_len_4_acc_top1",
+        "h2_reduction": 0.08984375,
+        "in_process_reference": 0.0859375,
+        "historical_metrics_csv": 0.0859375,
+        "delta_vs_reference": 0.00390625,
+        "delta_vs_historical": 0.00390625
+      },
+      {
+        "tag": "val/low_loss",
+        "h2_reduction": 3.119422213319922,
+        "in_process_reference": 3.1257309317588806,
+        "historical_metrics_csv": 3.125730991,
+        "delta_vs_reference": -0.006308718438958749,
+        "delta_vs_historical": -0.006308777680078315
+      },
+      {
+        "tag": "val/low_acc_top1",
+        "h2_reduction": 0.1298828125,
+        "in_process_reference": 0.1217447929084301,
+        "historical_metrics_csv": 0.1217447966,
+        "delta_vs_reference": 0.0081380195915699,
+        "delta_vs_historical": 0.008138015900000004
+      },
+      {
+        "tag": "val/combined_loss",
+        "h2_reduction": 5.01770548117444,
+        "in_process_reference": 5.02469465136528,
+        "historical_metrics_csv": 5.024694443,
+        "delta_vs_reference": -0.0069891701908399995,
+        "delta_vs_historical": -0.006988961825559414
+      }
+    ],
+    "max_abs_delta_vs_reference": 0.020833328366279602,
+    "max_abs_delta_vs_historical": 0.02083332837,
+    "reference_vs_historical_agreement": 2.0836528058509884e-07,
+    "note": "Deltas are within the ~1e-2 nat range expected from fp16-vs-fp32 evaluation precision.",
+    "run": "phase3_regularization_seed43"
+  },
+  {
+    "comparisons": [
+      {
+        "tag": "val/high_len_1_loss",
+        "h2_reduction": 6.3093898594379425,
+        "in_process_reference": 6.308868408203125,
+        "historical_metrics_csv": 6.308868408,
+        "delta_vs_reference": 0.0005214512348175049,
+        "delta_vs_historical": 0.0005214514379421331
+      },
+      {
+        "tag": "val/high_len_1_acc_top1",
+        "h2_reduction": 0.015625,
+        "in_process_reference": 0.015625,
+        "historical_metrics_csv": 0.015625,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/high_len_2_loss",
+        "h2_reduction": 6.3798515647649765,
+        "in_process_reference": 6.3797607421875,
+        "historical_metrics_csv": 6.379760742,
+        "delta_vs_reference": 9.082257747650146e-05,
+        "delta_vs_historical": 9.082276497629493e-05
+      },
+      {
+        "tag": "val/high_len_2_acc_top1",
+        "h2_reduction": 0.0390625,
+        "in_process_reference": 0.0390625,
+        "historical_metrics_csv": 0.0390625,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/high_len_3_loss",
+        "h2_reduction": 6.739750619977713,
+        "in_process_reference": 6.740152835845947,
+        "historical_metrics_csv": 6.740152836,
+        "delta_vs_reference": -0.0004022158682346344,
+        "delta_vs_historical": -0.00040221602228740494
+      },
+      {
+        "tag": "val/high_len_3_acc_top1",
+        "h2_reduction": 0.0,
+        "in_process_reference": 0.0,
+        "historical_metrics_csv": 0.0,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/high_len_4_loss",
+        "h2_reduction": 6.572032222524285,
+        "in_process_reference": 6.571708679199219,
+        "historical_metrics_csv": 6.571708679,
+        "delta_vs_reference": 0.00032354332506656647,
+        "delta_vs_historical": 0.000323543524284986
+      },
+      {
+        "tag": "val/high_len_4_acc_top1",
+        "h2_reduction": 0.046875,
+        "in_process_reference": 0.046875,
+        "historical_metrics_csv": 0.046875,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/high_loss",
+        "h2_reduction": 6.500256066676229,
+        "in_process_reference": 6.500122666358948,
+        "historical_metrics_csv": 6.500122547,
+        "delta_vs_reference": 0.0001334003172814846,
+        "delta_vs_historical": 0.0001335196762290991
+      },
+      {
+        "tag": "val/high_acc_top1",
+        "h2_reduction": 0.025390625,
+        "in_process_reference": 0.025390625,
+        "historical_metrics_csv": 0.025390625,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/low_len_1_loss",
+        "h2_reduction": 3.37596732750535,
+        "in_process_reference": 3.3757400512695312,
+        "historical_metrics_csv": 3.375740051,
+        "delta_vs_reference": 0.00022727623581886292,
+        "delta_vs_historical": 0.00022727650534992705
+      },
+      {
+        "tag": "val/low_len_1_acc_top1",
+        "h2_reduction": 0.125,
+        "in_process_reference": 0.125,
+        "historical_metrics_csv": 0.125,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/low_len_2_loss",
+        "h2_reduction": 3.6585397897288203,
+        "in_process_reference": 3.6585731506347656,
+        "historical_metrics_csv": 3.658573151,
+        "delta_vs_reference": -3.3360905945301056e-05,
+        "delta_vs_historical": -3.336127117981036e-05
+      },
+      {
+        "tag": "val/low_len_2_acc_top1",
+        "h2_reduction": 0.1328125,
+        "in_process_reference": 0.1328125,
+        "historical_metrics_csv": 0.1328125,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/low_len_3_loss",
+        "h2_reduction": 3.512232177463981,
+        "in_process_reference": 3.512371063232422,
+        "historical_metrics_csv": 3.512371063,
+        "delta_vs_reference": -0.00013888576844101053,
+        "delta_vs_historical": -0.00013888553601892895
+      },
+      {
+        "tag": "val/low_len_3_acc_top1",
+        "h2_reduction": 0.15625,
+        "in_process_reference": 0.15625,
+        "historical_metrics_csv": 0.15625,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/low_len_4_loss",
+        "h2_reduction": 3.34961221012054,
+        "in_process_reference": 3.3494820594787598,
+        "historical_metrics_csv": 3.349482059,
+        "delta_vs_reference": 0.00013015064178034663,
+        "delta_vs_historical": 0.00013015112054004518
+      },
+      {
+        "tag": "val/low_len_4_acc_top1",
+        "h2_reduction": 0.12890625,
+        "in_process_reference": 0.12890625,
+        "historical_metrics_csv": 0.12890625,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/low_loss",
+        "h2_reduction": 3.4740878762046727,
+        "in_process_reference": 3.4740415811538696,
+        "historical_metrics_csv": 3.474041462,
+        "delta_vs_reference": 4.629505080311347e-05,
+        "delta_vs_historical": 4.641420467255131e-05
+      },
+      {
+        "tag": "val/low_acc_top1",
+        "h2_reduction": 0.1357421875,
+        "in_process_reference": 0.1357421875,
+        "historical_metrics_csv": 0.1357421875,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/combined_loss",
+        "h2_reduction": 4.987171971440451,
+        "in_process_reference": 4.987082123756409,
+        "historical_metrics_csv": 4.987082005,
+        "delta_vs_reference": 8.984768404207699e-05,
+        "delta_vs_historical": 8.996644045033975e-05
+      }
+    ],
+    "max_abs_delta_vs_reference": 0.0005214512348175049,
+    "max_abs_delta_vs_historical": 0.0005214514379421331,
+    "reference_vs_historical_agreement": 1.1935894761450072e-07,
+    "note": "Deltas are within the ~1e-2 nat range expected from fp16-vs-fp32 evaluation precision.",
+    "run": "phase3_regularization_seed44"
+  },
+  {
+    "comparisons": [
+      {
+        "tag": "val/high_len_1_loss",
+        "h2_reduction": 6.7820064797997475,
+        "in_process_reference": 6.78179931640625,
+        "historical_metrics_csv": 6.781799316,
+        "delta_vs_reference": 0.00020716339349746704,
+        "delta_vs_historical": 0.00020716379974761168
+      },
+      {
+        "tag": "val/high_len_1_acc_top1",
+        "h2_reduction": 0.015625,
+        "in_process_reference": 0.015625,
+        "historical_metrics_csv": 0.015625,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/high_len_2_loss",
+        "h2_reduction": 6.576028758659959,
+        "in_process_reference": 6.57586669921875,
+        "historical_metrics_csv": 6.575866699,
+        "delta_vs_reference": 0.00016205944120883942,
+        "delta_vs_historical": 0.00016205965995919058
+      },
+      {
+        "tag": "val/high_len_2_acc_top1",
+        "h2_reduction": 0.0078125,
+        "in_process_reference": 0.0078125,
+        "historical_metrics_csv": 0.0078125,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/high_len_3_loss",
+        "h2_reduction": 6.4979246246318025,
+        "in_process_reference": 6.497904300689697,
+        "historical_metrics_csv": 6.497904301,
+        "delta_vs_reference": 2.0323942105271442e-05,
+        "delta_vs_historical": 2.032363180237695e-05
+      },
+      {
+        "tag": "val/high_len_3_acc_top1",
+        "h2_reduction": 0.0,
+        "in_process_reference": 0.0,
+        "historical_metrics_csv": 0.0,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/high_len_4_loss",
+        "h2_reduction": 6.587234198115766,
+        "in_process_reference": 6.587425231933594,
+        "historical_metrics_csv": 6.587425232,
+        "delta_vs_reference": -0.00019103381782770157,
+        "delta_vs_historical": -0.00019103388423413747
+      },
+      {
+        "tag": "val/high_len_4_acc_top1",
+        "h2_reduction": 0.0078125,
+        "in_process_reference": 0.0078125,
+        "historical_metrics_csv": 0.0078125,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/high_loss",
+        "h2_reduction": 6.610798515301819,
+        "in_process_reference": 6.610748887062073,
+        "historical_metrics_csv": 6.610748768,
+        "delta_vs_reference": 4.962823974619113e-05,
+        "delta_vs_historical": 4.9747301819280665e-05
+      },
+      {
+        "tag": "val/high_acc_top1",
+        "h2_reduction": 0.0078125,
+        "in_process_reference": 0.0078125,
+        "historical_metrics_csv": 0.0078125,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/low_len_1_loss",
+        "h2_reduction": 3.2911186469718814,
+        "in_process_reference": 3.291105270385742,
+        "historical_metrics_csv": 3.29110527,
+        "delta_vs_reference": 1.3376586139202118e-05,
+        "delta_vs_historical": 1.3376971881307043e-05
+      },
+      {
+        "tag": "val/low_len_1_acc_top1",
+        "h2_reduction": 0.140625,
+        "in_process_reference": 0.140625,
+        "historical_metrics_csv": 0.140625,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/low_len_2_loss",
+        "h2_reduction": 3.3975128541569575,
+        "in_process_reference": 3.397827386856079,
+        "historical_metrics_csv": 3.397827387,
+        "delta_vs_reference": -0.00031453269912162796,
+        "delta_vs_historical": -0.0003145328430425032
+      },
+      {
+        "tag": "val/low_len_2_acc_top1",
+        "h2_reduction": 0.125,
+        "in_process_reference": 0.125,
+        "historical_metrics_csv": 0.125,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/low_len_3_loss",
+        "h2_reduction": 3.418425714907547,
+        "in_process_reference": 3.4184467792510986,
+        "historical_metrics_csv": 3.418446779,
+        "delta_vs_reference": -2.1064343551646658e-05,
+        "delta_vs_historical": -2.1064092452949268e-05
+      },
+      {
+        "tag": "val/low_len_3_acc_top1",
+        "h2_reduction": 0.10416666666666667,
+        "in_process_reference": 0.1041666716337204,
+        "historical_metrics_csv": 0.1041666716,
+        "delta_vs_reference": -4.967053726656623e-09,
+        "delta_vs_historical": -4.933333325185529e-09
+      },
+      {
+        "tag": "val/low_len_4_loss",
+        "h2_reduction": 3.6018468108668458,
+        "in_process_reference": 3.6020777225494385,
+        "historical_metrics_csv": 3.602077723,
+        "delta_vs_reference": -0.0002309116825927049,
+        "delta_vs_historical": -0.0002309121331540709
+      },
+      {
+        "tag": "val/low_len_4_acc_top1",
+        "h2_reduction": 0.12109375,
+        "in_process_reference": 0.12109375,
+        "historical_metrics_csv": 0.12109375,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/low_loss",
+        "h2_reduction": 3.427226006725808,
+        "in_process_reference": 3.4273642897605896,
+        "historical_metrics_csv": 3.427364349,
+        "delta_vs_reference": -0.00013828303478158332,
+        "delta_vs_historical": -0.0001383422741918494
+      },
+      {
+        "tag": "val/low_acc_top1",
+        "h2_reduction": 0.12272135416666667,
+        "in_process_reference": 0.1227213554084301,
+        "historical_metrics_csv": 0.1227213591,
+        "delta_vs_reference": -1.2417634281947088e-09,
+        "delta_vs_historical": -4.933333325185529e-09
+      },
+      {
+        "tag": "val/combined_loss",
+        "h2_reduction": 5.019012261013813,
+        "in_process_reference": 5.019056588411331,
+        "historical_metrics_csv": 5.019056797,
+        "delta_vs_reference": -4.4327397517918143e-05,
+        "delta_vs_historical": -4.4535986186922116e-05
+      }
+    ],
+    "max_abs_delta_vs_reference": 0.00031453269912162796,
+    "max_abs_delta_vs_historical": 0.0003145328430425032,
+    "reference_vs_historical_agreement": 2.0858866900397288e-07,
+    "note": "Deltas are within the ~1e-2 nat range expected from fp16-vs-fp32 evaluation precision.",
+    "run": "phase3_songs17_seed43"
+  },
+  {
+    "comparisons": [
+      {
+        "tag": "val/high_len_1_loss",
+        "h2_reduction": 6.863724514842033,
+        "in_process_reference": 6.9376678466796875,
+        "historical_metrics_csv": 6.937667847,
+        "delta_vs_reference": -0.07394333183765411,
+        "delta_vs_historical": -0.07394333215796678
+      },
+      {
+        "tag": "val/high_len_1_acc_top1",
+        "h2_reduction": 0.015625,
+        "in_process_reference": 0.015625,
+        "historical_metrics_csv": 0.015625,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": 0.0
+      },
+      {
+        "tag": "val/high_len_2_loss",
+        "h2_reduction": 6.816104970406741,
+        "in_process_reference": 6.755363464355469,
+        "historical_metrics_csv": 6.755363464,
+        "delta_vs_reference": 0.060741506051272154,
+        "delta_vs_historical": 0.0607415064067407
+      },
+      {
+        "tag": "val/high_len_2_acc_top1",
+        "h2_reduction": 0.046875,
+        "in_process_reference": 0.0390625,
+        "historical_metrics_csv": 0.0390625,
+        "delta_vs_reference": 0.0078125,
+        "delta_vs_historical": 0.0078125
+      },
+      {
+        "tag": "val/high_len_3_loss",
+        "h2_reduction": 6.770846663663785,
+        "in_process_reference": 6.837193965911865,
+        "historical_metrics_csv": 6.837193966,
+        "delta_vs_reference": -0.06634730224808028,
+        "delta_vs_historical": -0.06634730233621511
+      },
+      {
+        "tag": "val/high_len_3_acc_top1",
+        "h2_reduction": 0.036458333333333336,
+        "in_process_reference": 0.015625,
+        "historical_metrics_csv": 0.015625,
+        "delta_vs_reference": 0.020833333333333336,
+        "delta_vs_historical": 0.020833333333333336
+      },
+      {
+        "tag": "val/high_len_4_loss",
+        "h2_reduction": 7.291439091786742,
+        "in_process_reference": 7.385688781738281,
+        "historical_metrics_csv": 7.385688782,
+        "delta_vs_reference": -0.09424968995153904,
+        "delta_vs_historical": -0.09424969021325769
+      },
+      {
+        "tag": "val/high_len_4_acc_top1",
+        "h2_reduction": 0.0390625,
+        "in_process_reference": 0.02734375,
+        "historical_metrics_csv": 0.02734375,
+        "delta_vs_reference": 0.01171875,
+        "delta_vs_historical": 0.01171875
+      },
+      {
+        "tag": "val/high_loss",
+        "h2_reduction": 6.935528810174826,
+        "in_process_reference": 6.978978514671326,
+        "historical_metrics_csv": 6.978978634,
+        "delta_vs_reference": -0.0434497044965001,
+        "delta_vs_historical": -0.04344982382517415
+      },
+      {
+        "tag": "val/high_acc_top1",
+        "h2_reduction": 0.034505208333333336,
+        "in_process_reference": 0.0244140625,
+        "historical_metrics_csv": 0.0244140625,
+        "delta_vs_reference": 0.010091145833333336,
+        "delta_vs_historical": 0.010091145833333336
+      },
+      {
+        "tag": "val/low_len_1_loss",
+        "h2_reduction": 2.67949883476831,
+        "in_process_reference": 2.663148880004883,
+        "historical_metrics_csv": 2.66314888,
+        "delta_vs_reference": 0.016349954763427377,
+        "delta_vs_historical": 0.016349954768310138
+      },
+      {
+        "tag": "val/low_len_1_acc_top1",
+        "h2_reduction": 0.25,
+        "in_process_reference": 0.234375,
+        "historical_metrics_csv": 0.234375,
+        "delta_vs_reference": 0.015625,
+        "delta_vs_historical": 0.015625
+      },
+      {
+        "tag": "val/low_len_2_loss",
+        "h2_reduction": 3.039976157830097,
+        "in_process_reference": 3.0665626525878906,
+        "historical_metrics_csv": 3.066562653,
+        "delta_vs_reference": -0.026586494757793844,
+        "delta_vs_historical": -0.0265864951699033
+      },
+      {
+        "tag": "val/low_len_2_acc_top1",
+        "h2_reduction": 0.1484375,
+        "in_process_reference": 0.1796875,
+        "historical_metrics_csv": 0.1796875,
+        "delta_vs_reference": -0.03125,
+        "delta_vs_historical": -0.03125
+      },
+      {
+        "tag": "val/low_len_3_loss",
+        "h2_reduction": 3.1025192661909387,
+        "in_process_reference": 3.0958125591278076,
+        "historical_metrics_csv": 3.095812559,
+        "delta_vs_reference": 0.006706707063131034,
+        "delta_vs_historical": 0.006706707190938577
+      },
+      {
+        "tag": "val/low_len_3_acc_top1",
+        "h2_reduction": 0.1875,
+        "in_process_reference": 0.1770833432674408,
+        "historical_metrics_csv": 0.1770833433,
+        "delta_vs_reference": 0.010416656732559204,
+        "delta_vs_historical": 0.010416656699999999
+      },
+      {
+        "tag": "val/low_len_4_loss",
+        "h2_reduction": 2.777146230713697,
+        "in_process_reference": 2.809475898742676,
+        "historical_metrics_csv": 2.809475899,
+        "delta_vs_reference": -0.03232966802897863,
+        "delta_vs_historical": -0.032329668286303015
+      },
+      {
+        "tag": "val/low_len_4_acc_top1",
+        "h2_reduction": 0.20703125,
+        "in_process_reference": 0.19140625,
+        "historical_metrics_csv": 0.19140625,
+        "delta_vs_reference": 0.015625,
+        "delta_vs_historical": 0.015625
+      },
+      {
+        "tag": "val/low_loss",
+        "h2_reduction": 2.8997851223757607,
+        "in_process_reference": 2.908749997615814,
+        "historical_metrics_csv": 2.908750057,
+        "delta_vs_reference": -0.008964875240053516,
+        "delta_vs_historical": -0.008964934624239529
+      },
+      {
+        "tag": "val/low_acc_top1",
+        "h2_reduction": 0.1982421875,
+        "in_process_reference": 0.1956380233168602,
+        "historical_metrics_csv": 0.1956380308,
+        "delta_vs_reference": 0.002604164183139801,
+        "delta_vs_historical": 0.0026041566999999988
+      },
+      {
+        "tag": "val/combined_loss",
+        "h2_reduction": 4.917656966275294,
+        "in_process_reference": 4.94386425614357,
+        "historical_metrics_csv": 4.943864346,
+        "delta_vs_reference": -0.026207289868276362,
+        "delta_vs_historical": -0.026207379724706215
+      }
+    ],
+    "max_abs_delta_vs_reference": 0.09424968995153904,
+    "max_abs_delta_vs_historical": 0.09424969021325769,
+    "reference_vs_historical_agreement": 1.1932867405306524e-07,
+    "note": "LARGER THAN EXPECTED (max |delta|=0.094 nats): H2's fp32 batch-of-1 cells differ from BOTH the in-process fp16 reference and the historical fp16 metrics.csv, while reference and historical agree with each other to <1.2e-07 nats. That rules out a batch-size or dataset-construction bug in H2's reduction -- this is a genuine fp16-autocast-vs-fp32 evaluation-precision effect on this checkpoint, large enough to be worth reporting on its own (comparable in scale to the data-scaling headline effect sizes), not something to wave away as noise.",
+    "run": "phase3_songs17_seed44"
   }
 ]

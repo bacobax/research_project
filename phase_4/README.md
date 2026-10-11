@@ -34,6 +34,13 @@ refusal) if asked to anyway.
     raw TensorBoard file (confirmed in-session: parsing `phase1_songs17`'s 1.4GB event file timed
     out at 570s with zero output; the scalar history already lives in the CSV with sha256
     provenance in `phase_1/results/provenance.json`).
+- `exp02_gradient_spike_sources.py` — pure-evaluation script (no new training): back-propagates
+  the token loss, the decoded-domain STFT term and the decoded-domain waveform-L1 term
+  *separately* on 100 training batches per checkpoint and records each gradient norm, plus the
+  model's weight norm. The STFT-loss evidence. See "Exp02" below and `METHODS.md`.
+- `make_summary.py` — regenerates `results/FINDINGS.md` (cross-run tables for H1-H4, the fp16/fp32
+  check and exp02) from the result files. No GPU needed.
+- `METHODS.md` — how each analysis was done, step by step, with caveats.
 - `__init__.py`
 
 ## Running
@@ -49,6 +56,15 @@ runtime, a few minutes) and need a CUDA device with room for inference (the run'
 `configs/train/phase1_songs17.yaml` pins `cuda:1`). H4 is pure CSV parsing, no GPU, runs in
 seconds, and intentionally runs first in `main()` so a missing/renamed metrics file fails fast
 before any GPU work starts.
+
+```bash
+# all 8 clean runs (the script overwrites results/ on each call, so always pass the full set):
+uv run python phase_4/exp01_underfitting_diagnostics.py --device cuda:1 --runs \
+  phase1_songs01 phase1_songs17 phase1_songs04 phase2_regularization \
+  phase3_regularization_seed43 phase3_regularization_seed44 phase3_songs17_seed43 phase3_songs17_seed44
+uv run python phase_4/exp02_gradient_spike_sources.py --device cuda:1   # all runs in CHECKPOINT_PLAN
+uv run python phase_4/make_summary.py                                   # -> results/FINDINGS.md
+```
 
 ## Key correctness notes (see script docstrings/comments for the full reasoning)
 
@@ -115,3 +131,75 @@ Headline findings from the first run:
   hiding.
 - H3 uses 2 examples per band at `mask_len=4` — a qualitative/illustrative sample, not a
   high-n statistical claim.
+
+## Update 2026-10-10: all clean runs + the Phase B reruns
+
+The H1-H4 diagnostics were repeated on 8 checkpoints: the original clean runs (`phase1_songs01`,
+`phase1_songs17`, `phase3_songs17_seed43/44`) and the four Phase B reruns (`phase1_songs04`,
+`phase2_regularization`, `phase3_regularization_seed43/44`). The `phase1_songs17` numbers
+reproduce the earlier (committed) results exactly (max difference 0.0 over 1,424 rows), so the
+pipeline is deterministic. All cross-run tables are in `results/FINDINGS.md`; headline points:
+
+- **H1** — in every run and both activity bands the model beats a context-free marginal predictor
+  on all 8 codebooks, so the strong "collapse to the marginal" reading is not supported. In the
+  high-activity band, though, the margin is small (0.5-1.0 nats) and predicted entropy is about
+  the same as the training marginal's (0.89-1.07x); in the low-activity band the margin is
+  1.3-2.3 nats and entropy is about half the marginal's. The argmax equals the single most
+  frequent training token in at most 1.4% (high) / 11% (low) of cells.
+- **H2** — later codebooks are worse in 8/8 high-activity and 7/8 low-activity run/band pairs
+  (NLL on codebook 8 minus codebook 1: +0.5 to +1.8 nats in the high band; top-1 on codebook 8 is
+  0.000 in 7/8 runs there). Consistent with the independent-heads/RVQ-hierarchy hypothesis, but a
+  decline is also expected from RVQ residuals getting harder, so it is not proof (H6 is the test).
+- **H3** — cross-attention is concentrated near the gap (5x to 860x more weight on the nearest
+  context column than on columns >= 257 frames away) in 30 of 32 (run, layer) pairs; layer 0 is
+  close to uniform (1x) in two 17-song runs. Context use is not the failure mode.
+- **H4** — no run satisfies the plateau criterion. Held-out loss ends above its minimum in 7 of 8
+  runs: `songs01` +1.03 nats (strong overfitting), `songs04` +0.29, `phase2_regularization`
+  +0.12, the 17-song runs +0.01 to +0.07.
+- **fp16 vs fp32 evaluation** — the large gap seen earlier is not general: 0.33 nats for
+  `phase1_songs17`, 0.094 for `phase3_songs17_seed44`, 0.021 or less for the other six.
+
+## Exp02 — gradient attribution (STFT-loss evidence)
+
+Motivation: the Phase B' audit of the reruns' aggregated TensorBoard logs reported 10-21% of steps
+with `grad_norm > 100` or non-finite, which looked like the STFT-loss epsilon bug persisting.
+Exp02 measures directly which loss term produces the gradient (method: `METHODS.md`; data:
+`results/exp02/`; figure: `results/exp02/gradient_attribution.png`; table: end of `results/FINDINGS.md`).
+26 checkpoints from 10 runs, including the two Phase 0 single-song runs (`baseline`, `bigmodel`).
+
+**Observations**
+
+1. The STFT term's gradient norm is **1.5%-6.5%** of the token-loss gradient norm at every
+   checkpoint measured (median over 100 batches); its largest absolute value is 8.1
+   (`phase2_regularization`, step 600k, where the token term is 377). The waveform-L1 term is
+   below 0.08 everywhere. The token loss accounts for essentially the whole gradient.
+2. The ratio is somewhat higher for the three runs that use the old `decoded_loss_log_eps = 1e-7`
+   default (`baseline` 3.8-3.9%, `bigmodel` 4.3-6.5%, `songs01` 2.1-6.0%) than for the eps = 1e-3
+   runs (1.5-3.4%), but the effect is small and never makes the STFT term dominant.
+3. The token-loss gradient norm grows steadily during training in every run: ~3-9 at the first
+   checkpoint, 15-380 at the last (the 17-song seed-42 run, measured only at 950k/1M, is flat at
+   ~65). The ">100" counter therefore fires on every late step of a run once the norm has
+   crossed 100: the reruns' "spike rate" is a drift past an arbitrary threshold, not a set of
+   outlier steps. Non-finite steps (~0.045% of steps, ordinary fp16 loss-scaler skips) are the
+   same in clean and rerun logs.
+4. The measurement agrees with the logged training-time norms (53.7 measured vs 52.9 logged for
+   `phase3_songs17_seed43` @300k; 220.5 vs 221.9 for `phase3_regularization_seed43` @300k).
+5. The weight L2 norm falls with training in every run that has an early and a late checkpoint up to
+   300k (e.g. 621 -> 314 for `phase2_regularization`; 1485 -> 1273 for `phase3_songs17_seed43`)
+   while the gradient norm rises, and the regularized runs (weight decay 0.1) have both the
+   smaller weights and the larger final gradients. This is consistent with weight decay shrinking
+   scale-invariant weights and inflating gradients, but it is a **hypothesis, not tested**; the
+   17-song seed-42 run (950k-1M steps, weights ~1686) does not fit a simple version of it.
+6. `phase_0` `baseline`'s `latest.pt` (step 162k) contains non-finite weights (148 tensors): that
+   run diverged after its best checkpoint at step 78k, so its late point here is `best.pt`
+   (step 78k). `bigmodel`'s `latest.pt` is finite.
+
+**What this does and does not show.** It shows that, at the current weight (0.1), the STFT term
+contributes a few percent of the gradient norm and that the earlier "spike" reading was a
+threshold artifact. It does **not** show whether the STFT loss helps, hurts or does nothing for
+held-out quality: a term that is small in gradient norm can still matter in directions the token
+loss ignores, and with clipping always active (norm >= 3 vs. clip 1.0) Adam sees direction only.
+Answering that needs the matched training ablation (`decoded_loss_enabled: false`, same seed and
+data as `phase3_songs17_seed43`), which has **not** been run. Separately, validation NLL of the
+four reruns is unchanged from the original runs (e.g. `phase2_regularization` 4.995 vs 4.9936),
+so the eps fix did not move held-out loss.
