@@ -47,9 +47,9 @@ RUN_TABLE = [
 ]
 
 
-def export_one(run_name: str, phase_folder: str, latest_tag: str) -> None:
+def export_one(run_name: str, phase_folder: str, latest_tag: str, device: str | None = None) -> None:
     for tag_label, checkpoint_tag in (("latest", latest_tag), ("best_val", "best_val")):
-        trainer = c.build_trainer(run_name, checkpoint_tag)
+        trainer = c.build_trainer(run_name, checkpoint_tag, device=device)
         scratch_samples_dir = trainer.cfg.samples_dir
         trainer.inpaint_all_gaps(save_crop_samples=True)
 
@@ -66,6 +66,7 @@ def export_one(run_name: str, phase_folder: str, latest_tag: str) -> None:
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs", nargs="+", default=[r[0] for r in RUN_TABLE], choices=[r[0] for r in RUN_TABLE])
+    parser.add_argument("--device", default=None, help="Override the run config's device (e.g. cuda:1); default: the config's own.")
     return parser.parse_args(argv)
 
 
@@ -74,7 +75,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     table = {name: (phase_folder, latest_tag) for name, phase_folder, latest_tag in RUN_TABLE}
     for run_name in args.runs:
         phase_folder, latest_tag = table[run_name]
-        export_one(run_name, phase_folder, latest_tag)
+        export_one(run_name, phase_folder, latest_tag, args.device)
 
 
 if __name__ == "__main__":

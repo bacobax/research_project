@@ -50,5 +50,369 @@
       2,
       3
     ]
+  },
+  {
+    "run": "phase1_songs17",
+    "checkpoint": "best_val",
+    "step": 950000,
+    "eps_bug_clean": true,
+    "examples": [
+      {
+        "band": "high_activity",
+        "example_id": 0,
+        "window_start": 14117,
+        "mask_start": 402,
+        "mask_mean_activity": 0.6668431758880615,
+        "left_ctx_len": 402,
+        "right_ctx_len": 106
+      },
+      {
+        "band": "high_activity",
+        "example_id": 1,
+        "window_start": 14204,
+        "mask_start": 149,
+        "mask_mean_activity": 0.9319708347320557,
+        "left_ctx_len": 149,
+        "right_ctx_len": 359
+      },
+      {
+        "band": "low_activity",
+        "example_id": 0,
+        "window_start": 27656,
+        "mask_start": 381,
+        "mask_mean_activity": 0.31550800800323486,
+        "left_ctx_len": 381,
+        "right_ctx_len": 127
+      },
+      {
+        "band": "low_activity",
+        "example_id": 1,
+        "window_start": 28141,
+        "mask_start": 331,
+        "mask_mean_activity": 0.10694444924592972,
+        "left_ctx_len": 331,
+        "right_ctx_len": 177
+      }
+    ],
+    "seq_len": 512,
+    "mask_len": 4,
+    "layers": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "run": "phase1_songs04",
+    "checkpoint": "best_val",
+    "step": 20000,
+    "eps_bug_clean": true,
+    "examples": [
+      {
+        "band": "high_activity",
+        "example_id": 0,
+        "window_start": 14117,
+        "mask_start": 402,
+        "mask_mean_activity": 0.6668431758880615,
+        "left_ctx_len": 402,
+        "right_ctx_len": 106
+      },
+      {
+        "band": "high_activity",
+        "example_id": 1,
+        "window_start": 14204,
+        "mask_start": 149,
+        "mask_mean_activity": 0.9319708347320557,
+        "left_ctx_len": 149,
+        "right_ctx_len": 359
+      },
+      {
+        "band": "low_activity",
+        "example_id": 0,
+        "window_start": 27656,
+        "mask_start": 381,
+        "mask_mean_activity": 0.31550800800323486,
+        "left_ctx_len": 381,
+        "right_ctx_len": 127
+      },
+      {
+        "band": "low_activity",
+        "example_id": 1,
+        "window_start": 28141,
+        "mask_start": 331,
+        "mask_mean_activity": 0.10694444924592972,
+        "left_ctx_len": 331,
+        "right_ctx_len": 177
+      }
+    ],
+    "seq_len": 512,
+    "mask_len": 4,
+    "layers": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "run": "phase2_regularization",
+    "checkpoint": "best_val",
+    "step": 25000,
+    "eps_bug_clean": true,
+    "examples": [
+      {
+        "band": "high_activity",
+        "example_id": 0,
+        "window_start": 14117,
+        "mask_start": 402,
+        "mask_mean_activity": 0.6668431758880615,
+        "left_ctx_len": 402,
+        "right_ctx_len": 106
+      },
+      {
+        "band": "high_activity",
+        "example_id": 1,
+        "window_start": 14204,
+        "mask_start": 149,
+        "mask_mean_activity": 0.9319708347320557,
+        "left_ctx_len": 149,
+        "right_ctx_len": 359
+      },
+      {
+        "band": "low_activity",
+        "example_id": 0,
+        "window_start": 27656,
+        "mask_start": 381,
+        "mask_mean_activity": 0.31550800800323486,
+        "left_ctx_len": 381,
+        "right_ctx_len": 127
+      },
+      {
+        "band": "low_activity",
+        "example_id": 1,
+        "window_start": 28141,
+        "mask_start": 331,
+        "mask_mean_activity": 0.10694444924592972,
+        "left_ctx_len": 331,
+        "right_ctx_len": 177
+      }
+    ],
+    "seq_len": 512,
+    "mask_len": 4,
+    "layers": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "run": "phase3_regularization_seed43",
+    "checkpoint": "best_val",
+    "step": 300000,
+    "eps_bug_clean": true,
+    "examples": [
+      {
+        "band": "high_activity",
+        "example_id": 0,
+        "window_start": 13527,
+        "mask_start": 120,
+        "mask_mean_activity": 0.7905809283256531,
+        "left_ctx_len": 120,
+        "right_ctx_len": 388
+      },
+      {
+        "band": "high_activity",
+        "example_id": 1,
+        "window_start": 14290,
+        "mask_start": 246,
+        "mask_mean_activity": 0.8901622891426086,
+        "left_ctx_len": 246,
+        "right_ctx_len": 262
+      },
+      {
+        "band": "low_activity",
+        "example_id": 0,
+        "window_start": 28329,
+        "mask_start": 500,
+        "mask_mean_activity": 0.3224225640296936,
+        "left_ctx_len": 500,
+        "right_ctx_len": 8
+      },
+      {
+        "band": "low_activity",
+        "example_id": 1,
+        "window_start": 27789,
+        "mask_start": 376,
+        "mask_mean_activity": 0.17500001192092896,
+        "left_ctx_len": 376,
+        "right_ctx_len": 132
+      }
+    ],
+    "seq_len": 512,
+    "mask_len": 4,
+    "layers": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "run": "phase3_regularization_seed44",
+    "checkpoint": "best_val",
+    "step": 25000,
+    "eps_bug_clean": true,
+    "examples": [
+      {
+        "band": "high_activity",
+        "example_id": 0,
+        "window_start": 14201,
+        "mask_start": 90,
+        "mask_mean_activity": 0.9165919423103333,
+        "left_ctx_len": 90,
+        "right_ctx_len": 418
+      },
+      {
+        "band": "high_activity",
+        "example_id": 1,
+        "window_start": 14364,
+        "mask_start": 471,
+        "mask_mean_activity": 0.841873288154602,
+        "left_ctx_len": 471,
+        "right_ctx_len": 37
+      },
+      {
+        "band": "low_activity",
+        "example_id": 0,
+        "window_start": 27830,
+        "mask_start": 330,
+        "mask_mean_activity": 0.2187500149011612,
+        "left_ctx_len": 330,
+        "right_ctx_len": 178
+      },
+      {
+        "band": "low_activity",
+        "example_id": 1,
+        "window_start": 27994,
+        "mask_start": 419,
+        "mask_mean_activity": 0.13258633017539978,
+        "left_ctx_len": 419,
+        "right_ctx_len": 89
+      }
+    ],
+    "seq_len": 512,
+    "mask_len": 4,
+    "layers": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "run": "phase3_songs17_seed43",
+    "checkpoint": "best_val",
+    "step": 20000,
+    "eps_bug_clean": true,
+    "examples": [
+      {
+        "band": "high_activity",
+        "example_id": 0,
+        "window_start": 13527,
+        "mask_start": 120,
+        "mask_mean_activity": 0.7905809283256531,
+        "left_ctx_len": 120,
+        "right_ctx_len": 388
+      },
+      {
+        "band": "high_activity",
+        "example_id": 1,
+        "window_start": 14290,
+        "mask_start": 246,
+        "mask_mean_activity": 0.8901622891426086,
+        "left_ctx_len": 246,
+        "right_ctx_len": 262
+      },
+      {
+        "band": "low_activity",
+        "example_id": 0,
+        "window_start": 28329,
+        "mask_start": 500,
+        "mask_mean_activity": 0.3224225640296936,
+        "left_ctx_len": 500,
+        "right_ctx_len": 8
+      },
+      {
+        "band": "low_activity",
+        "example_id": 1,
+        "window_start": 27789,
+        "mask_start": 376,
+        "mask_mean_activity": 0.17500001192092896,
+        "left_ctx_len": 376,
+        "right_ctx_len": 132
+      }
+    ],
+    "seq_len": 512,
+    "mask_len": 4,
+    "layers": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "run": "phase3_songs17_seed44",
+    "checkpoint": "best_val",
+    "step": 280000,
+    "eps_bug_clean": true,
+    "examples": [
+      {
+        "band": "high_activity",
+        "example_id": 0,
+        "window_start": 14201,
+        "mask_start": 90,
+        "mask_mean_activity": 0.9165919423103333,
+        "left_ctx_len": 90,
+        "right_ctx_len": 418
+      },
+      {
+        "band": "high_activity",
+        "example_id": 1,
+        "window_start": 14364,
+        "mask_start": 471,
+        "mask_mean_activity": 0.841873288154602,
+        "left_ctx_len": 471,
+        "right_ctx_len": 37
+      },
+      {
+        "band": "low_activity",
+        "example_id": 0,
+        "window_start": 27830,
+        "mask_start": 330,
+        "mask_mean_activity": 0.2187500149011612,
+        "left_ctx_len": 330,
+        "right_ctx_len": 178
+      },
+      {
+        "band": "low_activity",
+        "example_id": 1,
+        "window_start": 27994,
+        "mask_start": 419,
+        "mask_mean_activity": 0.13258633017539978,
+        "left_ctx_len": 419,
+        "right_ctx_len": 89
+      }
+    ],
+    "seq_len": 512,
+    "mask_len": 4,
+    "layers": [
+      0,
+      1,
+      2,
+      3
+    ]
   }
 ]

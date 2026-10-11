@@ -23,7 +23,7 @@ import argparse
 import csv
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 MASK_LENGTHS = (1, 2, 4, 8, 16)
 TRAINED_MASK_LEN_MAX = 4  # both headline runs' mask_len_max -- anything above this is OOD
@@ -49,19 +49,25 @@ METRIC_KEYS = (
 def append_summary_rows(rows: List[Dict[str, Any]]) -> None:
     """Same csv.DictWriter logic as c.append_summary_rows, but targets phase_3's own
     summary.csv -- calling c.append_summary_rows itself would write into phase_0/results/,
-    polluting Phase 0's own committed results."""
+    polluting Phase 0's own committed results. Re-running a run replaces that
+    (experiment, run)'s previous rows instead of appending duplicates."""
     SUMMARY_CSV.parent.mkdir(parents=True, exist_ok=True)
-    write_header = not SUMMARY_CSV.exists()
-    with open(SUMMARY_CSV, "a", newline="", encoding="utf-8") as f:
+    replaced = {(r["experiment"], r["run"]) for r in rows}
+    kept: List[Dict[str, Any]] = []
+    if SUMMARY_CSV.exists():
+        with open(SUMMARY_CSV, newline="", encoding="utf-8") as f:
+            kept = [r for r in csv.DictReader(f) if (r.get("experiment"), r.get("run")) not in replaced]
+    with open(SUMMARY_CSV, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=SUMMARY_COLUMNS, extrasaction="ignore")
-        if write_header:
-            writer.writeheader()
+        writer.writeheader()
+        for row in kept:
+            writer.writerow(row)
         for row in rows:
             writer.writerow({**{col: "" for col in SUMMARY_COLUMNS}, **row})
 
 
-def run_one(run_name: str, mask_lengths: Tuple[int, ...]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    trainer = c.build_trainer(run_name, CHECKPOINT_TAG)
+def run_one(run_name: str, mask_lengths: Tuple[int, ...], device: Optional[str] = None) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    trainer = c.build_trainer(run_name, CHECKPOINT_TAG, device=device)
     step = trainer.global_step
     frame_rate = trainer.encoder.frame_rate
 
@@ -153,6 +159,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs", nargs="+", default=list(RUN_NAMES), choices=list(RUN_NAMES))
     parser.add_argument("--mask-lengths", nargs="+", type=int, default=list(MASK_LENGTHS))
+    parser.add_argument("--device", default=None, help="Override the run config's device (e.g. cuda:1); default: the config's own.")
     return parser.parse_args(argv)
 
 
@@ -163,7 +170,7 @@ def main(argv=None) -> None:
     all_records: List[Dict[str, Any]] = []
     all_rows: List[Dict[str, Any]] = []
     for run_name in args.runs:
-        records, rows = run_one(run_name, mask_lengths)
+        records, rows = run_one(run_name, mask_lengths, args.device)
         all_records.extend(records)
         all_rows.extend(rows)
         print(f"=== {run_name} ({CHECKPOINT_TAG}) ===")
