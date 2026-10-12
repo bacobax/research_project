@@ -1,0 +1,210 @@
+[
+ {
+  "run": "baseline",
+  "step": 20000,
+  "iterations": [
+   {
+    "gap": 0,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 1,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 2,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 3,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   }
+  ],
+  "precision_heldout": {
+   "argmax_agreement": 0.99921875,
+   "tokens": 1280,
+   "mean_nll_fp16_minus_fp32": 7.481127977371216e-05,
+   "max_abs_example_dnll": 0.00312042236328125
+  },
+  "precision_real_gaps": {
+   "argmax_agreement": 1.0,
+   "tokens": 56
+  },
+  "activity_summary": {
+   "real_gap_activity": [
+    0.3575480878353119,
+    0.44551119208335876,
+    0.45868828892707825,
+    0.6851856112480164
+   ],
+   "real_gap_percentile_in_training": [
+    11.975,
+    26.450000000000003,
+    28.67,
+    65.095
+   ],
+   "low_thr": 0.38734278082847595,
+   "high_thr": 0.6536419987678528
+  }
+ },
+ {
+  "run": "phase1_songs01",
+  "step": 10000,
+  "iterations": [
+   {
+    "gap": 0,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 1,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 2,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 3,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   }
+  ],
+  "precision_heldout": {
+   "argmax_agreement": 0.99765625,
+   "tokens": 1280,
+   "mean_nll_fp16_minus_fp32": 0.00010481849312782288,
+   "max_abs_example_dnll": 0.0010089874267578125
+  },
+  "precision_real_gaps": {
+   "argmax_agreement": 1.0,
+   "tokens": 56
+  },
+  "activity_summary": {
+   "real_gap_activity": [
+    0.3575480878353119,
+    0.44551119208335876,
+    0.45868828892707825,
+    0.6851856112480164
+   ],
+   "real_gap_percentile_in_training": [
+    11.975,
+    26.450000000000003,
+    28.67,
+    65.095
+   ],
+   "low_thr": 0.38734278082847595,
+   "high_thr": 0.6536419987678528
+  }
+ },
+ {
+  "run": "phase2_regularization",
+  "step": 25000,
+  "iterations": [
+   {
+    "gap": 0,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 1,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 2,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 3,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   }
+  ],
+  "precision_heldout": {
+   "argmax_agreement": 0.99375,
+   "tokens": 1280,
+   "mean_nll_fp16_minus_fp32": 2.0440667867660522e-05,
+   "max_abs_example_dnll": 0.0013554096221923828
+  },
+  "precision_real_gaps": {
+   "argmax_agreement": 1.0,
+   "tokens": 56
+  },
+  "activity_summary": {
+   "real_gap_activity": [
+    0.3575480878353119,
+    0.44551119208335876,
+    0.45868828892707825,
+    0.6851856112480164
+   ],
+   "real_gap_percentile_in_training": [
+    11.975,
+    26.450000000000003,
+    28.67,
+    65.095
+   ],
+   "low_thr": 0.38734278082847595,
+   "high_thr": 0.6536419987678528
+  }
+ },
+ {
+  "run": "phase3_regularization_seed43",
+  "step": 300000,
+  "iterations": [
+   {
+    "gap": 0,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 1,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 2,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 3,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   }
+  ],
+  "precision_heldout": {
+   "argmax_agreement": 0.82265625,
+   "tokens": 1280,
+   "mean_nll_fp16_minus_fp32": 0.0032402779906988144,
+   "max_abs_example_dnll": 0.11616325378417969
+  },
+  "precision_real_gaps": {
+   "argmax_agreement": 0.9464285714285714,
+   "tokens": 56
+  },
+  "activity_summary": {
+   "real_gap_activity": [
+    0.3575480878353119,
+    0.44551119208335876,
+    0.45868828892707825,
+    0.6851856112480164
+   ],
+   "real_gap_percentile_in_training": [
+    11.64,
+    26.57,
+    28.93,
+    65.35
+   ],
+   "low_thr": 0.38734278082847595,
+   "high_thr": 0.6536419987678528
+  }
+ }
+]

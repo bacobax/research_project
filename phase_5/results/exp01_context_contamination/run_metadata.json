@@ -1,0 +1,34 @@
+[
+ {
+  "run": "baseline",
+  "step": 20000,
+  "hop_samples": 320,
+  "frames": 30017,
+  "agreement_trainer_codes_vs_reencoded_gapped_source": 0.9937993288040161,
+  "real_far_mismatch_rate": 0.0180478785187006
+ },
+ {
+  "run": "phase1_songs01",
+  "step": 10000,
+  "hop_samples": 320,
+  "frames": 30017,
+  "agreement_trainer_codes_vs_reencoded_gapped_source": 0.9937993288040161,
+  "real_far_mismatch_rate": 0.0180478785187006
+ },
+ {
+  "run": "phase2_regularization",
+  "step": 25000,
+  "hop_samples": 320,
+  "frames": 30017,
+  "agreement_trainer_codes_vs_reencoded_gapped_source": 0.9937993288040161,
+  "real_far_mismatch_rate": 0.0180478785187006
+ },
+ {
+  "run": "phase3_regularization_seed43",
+  "step": 300000,
+  "hop_samples": 320,
+  "frames": 30017,
+  "agreement_trainer_codes_vs_reencoded_gapped_source": 0.9937993288040161,
+  "real_far_mismatch_rate": 0.0180478785187006
+ }
+]

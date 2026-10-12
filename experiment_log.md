@@ -52,6 +52,17 @@ getting a new one.
   `phase_4/METHODS.md`, `phase_4/results/FINDINGS.md`. Note: Phase 0 `baseline` `latest.pt` (step 162k) has
   non-finite weights (the run diverged after its best checkpoint at step 78k); use `best_val`/`best`.
 
+- **Phase 5, train/inference consistency (supervisor Q3; no new training)**: three evaluation
+  experiments on the four single-song checkpoints (`baseline`, `phase1_songs01`, `phase2_regularization`,
+  `phase3_regularization_seed43`). Main finding: at a real gap the context is encoded from audio
+  with the gap zeroed; EnCodec's causal encoder then changes most tokens after the gap (86% at the
+  next frame, ~30% after 0.85 s), and frame rounding leaves 11-33% of each real gap's silence outside
+  the mask. The model's predictions are unaffected, but the corrupted context tokens are decoded
+  unchanged and cost 2-4 dB SI-SDR around the gap (recovered when the predictions are written into
+  clean context). Gap position, gap length, inference iterations and (for 3/4 checkpoints) precision
+  are consistent; checkpoint selection on token NLL tracks audio quality poorly. Writeup:
+  `phase_5/README.md` (Q3 table), `phase_5/METHODS.md`.
+
 ## Notes on the Phase B rerun batch (launched 2026-10-07)
 
 - All 4 launched as a single sequential background chain on `cuda:1` (23.9GB free vs. `cuda:0`'s
