@@ -1,3 +1,8 @@
+"""Training configuration for the infiller: the TrainConfig dataclass, validation, YAML loading
+(with a tiny fallback parser when PyYAML is absent), annotation-driven hyperparameters and the CLI.
+Precedence is dataclass defaults < YAML config < explicit CLI flags.
+"""
+
 import argparse
 import ast
 import json
@@ -8,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 @dataclass
 class TrainConfig:
+    """All training/inference settings; field names match YAML keys (snake_case) and CLI flags (kebab-case)."""
     config: Optional[str] = None
     ds_dir: str = "data/processed/single_gap"
     sample: Optional[str] = None
@@ -134,6 +140,7 @@ class TrainConfig:
 
 
 def validate_train_config(cfg: TrainConfig):
+    """Raise ValueError if any config field is out of range or inconsistent (e.g. probabilities, mask lengths, cadences)."""
     if cfg.seq_len <= 0:
         raise ValueError("seq_len must be > 0")
     if cfg.mask_len_min <= 0 or cfg.mask_len_max <= 0:
@@ -264,6 +271,7 @@ def validate_train_config(cfg: TrainConfig):
 
 
 def _parse_simple_yaml_value(raw: str) -> Any:
+    """Parse one scalar/list YAML value for the PyYAML-free fallback loader (null/true/false, literals, else raw string)."""
     text = raw.strip()
     if text == "null":
         return None
@@ -281,6 +289,7 @@ def _parse_simple_yaml_value(raw: str) -> Any:
 
 
 def load_yaml_config(path: str) -> Dict[str, Any]:
+    """Load a YAML mapping from `path`; uses PyYAML if installed, else a minimal flat key: value parser."""
     try:
         import yaml
 
@@ -310,6 +319,7 @@ def load_yaml_config(path: str) -> Dict[str, Any]:
 
 
 def load_annotation(ds_dir: str, sample: str) -> dict:
+    """Load the JSON annotation written by make_gapped_dataset for <ds_dir>/<sample>.json."""
     json_path = Path(ds_dir) / f"{sample}.json"
     if not json_path.exists():
         raise FileNotFoundError(f"Annotation not found: {json_path}")
@@ -318,6 +328,7 @@ def load_annotation(ds_dir: str, sample: str) -> dict:
 
 
 def apply_auto_hparams(cfg: TrainConfig, ann: dict):
+    """Overwrite gap location, sample rate, window/mask lengths, context and bandwidth in `cfg` from a dataset annotation (used when auto_hparam is true)."""
     if "gaps" in ann:
         first_gap = ann["gaps"][0]
         cfg.gap_start_s = first_gap["gap_start_s"]
@@ -349,6 +360,7 @@ def apply_auto_hparams(cfg: TrainConfig, ann: dict):
 
 
 def parse_args(argv: Optional[List[str]] = None):
+    """Build the config: defaults, then --config YAML, then explicit CLI overrides (and annotation hparams if requested). Returns (cfg, args)."""
     parser = argparse.ArgumentParser(description="Audio Infiller Training")
     cfg = TrainConfig()
 

@@ -27,6 +27,7 @@ BLUE_RAMP = ["#86b6ef", "#6da7ec", "#5598e7", "#3987e5", "#2a78d6", "#256abf", "
 
 
 def apply_style() -> None:
+    """Set matplotlib rcParams (surface/ink colours, grid, fonts) for the Phase 5 report figures."""
     plt.rcParams.update({
         "figure.facecolor": SURFACE,
         "axes.facecolor": SURFACE,
@@ -58,6 +59,7 @@ def apply_style() -> None:
 
 
 def save(fig, out_dir: Path, name: str) -> None:
+    """Save a figure as PNG and PDF under out_dir/<name> and close it."""
     out_dir.mkdir(parents=True, exist_ok=True)
     for ext in ("png", "pdf"):
         fig.savefig(out_dir / f"{name}.{ext}", dpi=170 if ext == "png" else None, bbox_inches="tight",

@@ -18,6 +18,7 @@ TRAINED_MASK_LEN_MAX = 4
 
 
 def load():
+    """Read the sweep's results JSON, or None if it does not exist."""
     if not JSON_PATH.exists():
         return None
     with open(JSON_PATH) as f:
@@ -25,6 +26,7 @@ def load():
 
 
 def fmt(x, nd=3):
+    """Format a number with nd decimals ('n/a' for None/NaN)."""
     if x is None or (isinstance(x, float) and np.isnan(x)):
         return "n/a"
     return f"{x:.{nd}f}"
@@ -49,6 +51,7 @@ def degradation_shape(records, metric):
 
 
 def section_for_run(run_name, records):
+    """Markdown table of per-band, per-mask-length metrics for one run."""
     lines = [f"\n## {run_name}\n"]
     lines.append(
         "| band | mask_len | gap_ms | OOD | acc_top1 | si_sdr_db_gap_only | spectral_convergence_gap_only |"
@@ -71,6 +74,7 @@ def section_for_run(run_name, records):
 
 
 def main():
+    """Write the Phase 3 / Experiment 1 findings report from the sweep JSON."""
     records = load()
     report = ["# Phase 3 / Experiment 1 Findings — gap-length x activity-band sweep\n"]
     report.append(

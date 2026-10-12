@@ -46,6 +46,7 @@ from audio_infill.config import load_yaml_config
 
 @dataclass
 class DataConfig:
+    """Dataset-generation settings (YAML keys / CLI flags): source wav, gap lengths and count, placement and token-length options."""
     config: Optional[str] = None
     wav: str = "data/raw/wav_test.wav"
     outdir: str = "data/processed/single_gap"
@@ -62,11 +63,13 @@ class DataConfig:
     extra_ctx_s: float = 2.0
 
     def __post_init__(self):
+        """Default gap_seconds to a single 1 s gap."""
         if self.gap_seconds is None:
             self.gap_seconds = [1.0]
 
 
 def validate_data_config(cfg: DataConfig):
+    """Raise ValueError for empty/non-positive gap lengths or other invalid settings."""
     if not cfg.gap_seconds:
         raise ValueError("gap_seconds must contain at least one value")
     if any(float(g) <= 0 for g in cfg.gap_seconds):
@@ -90,6 +93,7 @@ def validate_data_config(cfg: DataConfig):
 
 
 def parse_args(argv: Optional[List[str]] = None) -> DataConfig:
+    """Parse CLI flags and merge them over an optional YAML config (CLI wins) into a validated DataConfig."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", type=str, default=None, help="Path to YAML dataset config")
     ap.add_argument("--wav", type=str, default=None, help="Input .wav path")
@@ -149,6 +153,7 @@ def parse_args(argv: Optional[List[str]] = None) -> DataConfig:
 
 
 def next_pow2(n: int) -> int:
+    """Smallest power of two >= n (1 for n <= 1)."""
     if n <= 1:
         return 1
     return 1 << (n - 1).bit_length()
@@ -168,6 +173,7 @@ def format_gap_duration_tag(gap_len_s: float) -> str:
 
 
 def load_wav_mono(path: str) -> Tuple[np.ndarray, int]:
+    """Read a wav, downmix to mono float32 and peak-normalise to [-1, 1]. Returns (audio, sample_rate)."""
     audio, sr = sf.read(path, always_2d=True)  # [T, C]
     audio = audio.astype(np.float32)
     audio = audio.mean(axis=1)  # mono [T]
@@ -178,6 +184,7 @@ def load_wav_mono(path: str) -> Tuple[np.ndarray, int]:
 
 
 def resample_if_needed(audio: np.ndarray, sr: int, target_sr: int) -> Tuple[np.ndarray, int]:
+    """Resample audio to target_sr with librosa when the rates differ; returns (audio, sr)."""
     if sr == target_sr:
         return audio, sr
     try:
@@ -199,6 +206,7 @@ def choose_gap_start_end(
     margin_s: float,
     rng: random.Random,
 ) -> Tuple[float, float]:
+    """Pick (start_s, end_s) of one gap of length gap_len_s, keeping margin_s from both file edges (center_mode: 'middle' or 'random')."""
     if gap_len_s <= 0:
         raise ValueError("gap length must be > 0")
     if gap_len_s >= duration_s - 2 * margin_s:
@@ -356,6 +364,7 @@ def choose_multiple_gap_positions(
 
 
 def apply_gap(audio: np.ndarray, sr: int, start_s: float, end_s: float) -> Tuple[np.ndarray, int, int]:
+    """Zero the samples in [start_s, end_s). Returns (gapped_audio, start_sample, end_sample)."""
     start_i = int(round(start_s * sr))
     end_i = int(round(end_s * sr))
     start_i = max(0, min(len(audio), start_i))
@@ -529,6 +538,7 @@ def recommend_training_lengths_multi(
 
 
 def main():
+    """CLI entry point: load/resample audio, place gaps, write the gapped wav(s) and JSON annotation(s) under outdir."""
     cfg = parse_args()
 
     outdir = Path(cfg.outdir)

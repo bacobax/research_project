@@ -1,27 +1,34 @@
 config: configs/train/phase3_songs17_seed43.yaml
+# Dataset inputs: processed gapped-audio directory + sample name (<ds_dir>/<sample>.json annotation).
 ds_dir: data/processed/nuvole_bianche_short_gaps
 sample: nuvole_bianche_multigap_4x_15ms_20ms_30ms_50ms
+# If true, overwrite gap/seq_len/mask settings from the sample's JSON annotation recommendations.
 auto_hparam: false
 
+# Audio + codec: input wav, codec sample rate and EnCodec bandwidth (kbps); gap_*_s is the primary gap in seconds.
 wav_path: data/processed/nuvole_bianche_short_gaps/nuvole_bianche_multigap_4x_15ms_20ms_30ms_50ms.wav
 target_sr: 24000
 bandwidth: 6.0
 gap_start_s: 0.0
 gap_end_s: 0.015
 
+# Transformer size (max_len = positional-embedding table size in frames).
 d_model: 256
 n_heads: 4
 n_layers: 4
 max_len: 512
 dropout: 0.1
+# Max frame distance (clamped) used by the boundary-conditioning embeddings.
 boundary_max_distance: 128
 
+# Training window: frames per sample, and min/max masked-span length in frames (ctx_left/right: optional fixed context).
 seq_len: 512
 mask_len_min: 1
 mask_len_max: 4
 ctx_left: null
 ctx_right: null
 
+# Optimisation: AdamW with linear warmup then cosine decay to total_steps; grad_clip is global-norm.
 batch_size: 16
 lr: 0.0003
 weight_decay: 0.01
@@ -36,10 +43,12 @@ warmup_steps: 7000
 # truncated early.
 total_steps: 300000
 
+# Cadences in steps (0 disables): scalar logging, checkpoints, test-gap fill samples.
 log_every: 1000
 save_every: 100000
 test_fill_every: 50000
 
+# Validation: cadence in steps and fixed-pool construction (validation_strategy picks how the pool is built).
 validation_every: 10000
 validation_examples_per_band: 64
 validation_batch_size: 16
@@ -55,22 +64,26 @@ validation_crop_context_frames: null
 validation_save_artifacts: true
 num_workers: 2
 
+# Run bookkeeping: outputs go to <output_dir>/<run_name>; device 'auto' picks cuda when available.
 output_dir: outputs/runs/phase3_seed_check
 run_name: phase3_songs17_seed43
 seed: 43
 device: cuda:1
 
+# Resume from a checkpoint path; inpaint_only skips training and only runs inference (inpaint_iters refinement passes).
 resume: null
 inpaint_only: false
 inpaint_iters: 1
 inpaint_output: null
 
+# Optional mask-length curriculum from curriculum_start_mask to curriculum_end_mask over curriculum_warmup_frac of training.
 curriculum: false
 curriculum_start_mask: 1
 curriculum_end_mask: 4
 curriculum_warmup_frac: 0.1
 curriculum_schedule: linear
 
+# Activity-aware window sampling: smoothing, low/high activity quantiles, dead-window thresholds, regime probabilities.
 activity_smooth_kernel: 9
 activity_low_quantile: 0.30
 activity_high_quantile: 0.70
@@ -83,10 +96,13 @@ regime_transition_prob: 0.30
 regime_low_prob: 0.20
 regime_uniform_prob: 0.15
 
+# Mask placement stride (frames) and whether masks are steered by the activity regimes above.
 mask_stride: 1
 activity_guided_masking: true
 
+# Model variant: true = encoder-decoder infiller, false = joint (decoder-only style) infiller.
 use_encoder_decoder: true
+# Decoded-audio auxiliary loss (waveform L1 + multi-resolution STFT) on the codec-decoded prediction; log_eps floors the log-magnitude term.
 decoded_loss_enabled: true
 decoded_loss_weight: 0.10
 decoded_loss_start_step: 7000
@@ -108,6 +124,7 @@ decoded_loss_win_lengths: [512, 1024, 2048]
 # floor bounds that specific term's worst-case gradient at ~1/eps (~1e3 here) instead.
 decoded_loss_log_eps: 0.001
 
+# Training-stability and validation-metric options.
 early_stopping_enabled: false   # no patience, matching every Phase 1/2/3 run
 nan_guard_enabled: true
 

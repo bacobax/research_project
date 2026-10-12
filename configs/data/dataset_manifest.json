@@ -1,0 +1,106 @@
+{
+  "files": {
+    "dataset/001_Einaudi_Le_Onde.wav": {
+      "sha256": "372f1f4eca06b42e224abc6f442149398c5b6b692ad347f4e1c67012270647e4",
+      "bytes": 15551382,
+      "frames": 7775652,
+      "video_id": "biSuBx4w0F0"
+    },
+    "dataset/002_Ludovico_Einaudi_-_Nefeli_Visualiser.wav": {
+      "sha256": "dd327adee06e6a07c295fb10825c6aa276f009b55d20abebf5af12feb44f3899",
+      "bytes": 12072014,
+      "frames": 6035968,
+      "video_id": "MCExtikQceI"
+    },
+    "dataset/003_Einaudi_Melodia_Africana_III.wav": {
+      "sha256": "cf021dbae6ca1099d4621e7413e8ebbbfdfc765ca98644af495b21bacaeb95eb",
+      "bytes": 12424750,
+      "frames": 6212336,
+      "video_id": "AR1NetSdT2I"
+    },
+    "dataset/004_Ludovico_Einaudi_-_Memory_One_Visualiser.wav": {
+      "sha256": "45dd650413005ff048ad90ed6fe0964be32e8f933fbeeb244eccfea0b2579c3c",
+      "bytes": 12618546,
+      "frames": 6309234,
+      "video_id": "QEQxoH80vdE"
+    },
+    "dataset/005_Einaudi_I_Giorni.wav": {
+      "sha256": "afb3eb40bcbe41bd170e56d9a1bcf490ece25ec6c1fbf55ed3574a877de43767",
+      "bytes": 17242322,
+      "frames": 8621122,
+      "video_id": "3RW-9qW8XZY"
+    },
+    "dataset/006_Einaudi_In_Un_Altra_Vita.wav": {
+      "sha256": "06e0d8bd085542c78f7d09ba4778a7cb48b40d6ab592feb7fe6be7e4f10bc9c7",
+      "bytes": 15362924,
+      "frames": 7681423,
+      "video_id": "t_r5pb0R03g"
+    },
+    "dataset/007_Ludovico_Einaudi_-_Una_Mattina_Visualizer.wav": {
+      "sha256": "7036edcddae5f2ea3ef1bb8b7844ee68db0fa92d991c9ca3cffed6f92d6100ee",
+      "bytes": 9886764,
+      "frames": 4943343,
+      "video_id": "IukERq7ROO4"
+    },
+    "dataset/008_Ludovico_Einaudi_-_Nuvole_Bianche_Official_Visualiser.wav": {
+      "sha256": "f80559095a880f0684aa9fbd1d124b03c8f03e0d0d2dd8cfe3365fc5e738ced8",
+      "bytes": 17382722,
+      "frames": 8691322,
+      "video_id": "wTeRQ16O798"
+    },
+    "dataset/009_Ludovico_Einaudi_-_Monday_Official_Visualizer.wav": {
+      "sha256": "7edf3fea573f6763bcee6560e3a482c352ec4094b8f82e9977c70adbd2eea033",
+      "bytes": 17130276,
+      "frames": 8565099,
+      "video_id": "qnEyeq9ydlA"
+    },
+    "dataset/010_Ludovico_Einaudi_-_Jay.wav": {
+      "sha256": "35498c1c322b56a13a04e7cce6518cf6a53dfe032025e7ed97ca20fcfa1fb3cf",
+      "bytes": 9249794,
+      "frames": 4624858,
+      "video_id": "o7hTPDuAcEU"
+    },
+    "dataset/011_Ludovico_Einaudi_-_Birdsong_from_DAY_2_Official_Video.wav": {
+      "sha256": "ee790255534a9fd543977e7517127439d0adc4f98f7b5dbc50869ce5e65f5b89",
+      "bytes": 5917774,
+      "frames": 2958848,
+      "video_id": "dxSun1xYrvU"
+    },
+    "dataset/012_Ludovico_Einaudi_-_Adieux_Official_Visualiser.wav": {
+      "sha256": "dd05250bff25c379740d546bfadd9bd59ecc4478ec3cb631c7a376b0e0be2694",
+      "bytes": 8427250,
+      "frames": 4213586,
+      "video_id": "dGR-a8nyTWs"
+    },
+    "dataset/013_Einaudi_Berlin_Song.wav": {
+      "sha256": "a57675e7a1791af1a265ba16df0b0a41795ef6f7fa52ff3062f5156bb21b0c31",
+      "bytes": 12649086,
+      "frames": 6324504,
+      "video_id": "fpA-tS96hGg"
+    },
+    "dataset/014_Ludovico_Einaudi_-_Experience_Official_Solo_Piano_Performance_Video.wav": {
+      "sha256": "e3d86be41146f6a708c5a2c6d1875ad7b756f0dcacf0796409d2b96d2ea252ad",
+      "bytes": 15535344,
+      "frames": 7767633,
+      "video_id": "O9wjmEhMKFw"
+    },
+    "dataset/015_Ludovico_Einaudi_-_Luminous_Official_Visualiser.wav": {
+      "sha256": "5902c1b669131526498a8cb147fedbfabc9f59b889c2f384498110cd06155fad",
+      "bytes": 13636136,
+      "frames": 6818029,
+      "video_id": "MgS-Lq_pUGk"
+    },
+    "dataset/016_Einaudi_Elegy_For_The_Arctic.wav": {
+      "sha256": "565a4f2119cdd3c5de2c07703f4dfbd12c6850366a51239ccc88e6e518301375",
+      "bytes": 7609858,
+      "frames": 3804890,
+      "video_id": "HQisZcNpdT4"
+    },
+    "dataset/017_Einaudi_The_Snow_Prelude_No._2.wav": {
+      "sha256": "b95ed9a41ae32320c4046c5b390112f427a6b102d0bca399e00ff2115e29fac4",
+      "bytes": 12261604,
+      "frames": 6130763,
+      "video_id": "lzBv7F37stU"
+    }
+  }
+}

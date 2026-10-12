@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Resume training from the checkpoint named in configs/train/resume_multigap.yaml.
+# Override the config with CONFIG_PATH=...; extra args are forwarded to audio-infill-train.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

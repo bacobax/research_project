@@ -16,6 +16,7 @@ import common as c  # noqa: E402
 
 
 def load(name: str):
+    """Read a results JSON from RESULTS_DIR, or None if the experiment did not run."""
     path = c.RESULTS_DIR / name
     if not path.exists():
         return None
@@ -25,12 +26,14 @@ def load(name: str):
 
 
 def fmt(x, nd=4):
+    """Format a number with nd decimals ('n/a' for None/NaN)."""
     if x is None or (isinstance(x, float) and np.isnan(x)):
         return "n/a"
     return f"{x:.{nd}f}"
 
 
 def section_exp01(records) -> str:
+    """Markdown section for experiment 1 (train-region control) with its verdicts."""
     lines = ["## Experiment 1 — Train-region control\n"]
     if not records:
         lines.append("_exp01 did not run._\n")
@@ -66,6 +69,7 @@ def section_exp01(records) -> str:
 
 
 def section_exp02(records) -> str:
+    """Markdown section for experiment 2 (token baselines vs model)."""
     lines = ["\n## Experiment 2 — Token-space baselines vs. model\n"]
     if not records:
         lines.append("_exp02 did not run._\n")
@@ -94,6 +98,7 @@ def section_exp02(records) -> str:
 
 
 def section_exp03(records) -> str:
+    """Markdown section for experiment 3 (decoded-audio metrics)."""
     lines = ["\n## Experiment 3 — Decoded-audio metrics (synthetic validation masks)\n"]
     if not records:
         lines.append("_exp03 did not run._\n")
@@ -115,6 +120,7 @@ def section_exp03(records) -> str:
 
 
 def section_exp04(records) -> str:
+    """Markdown section for experiment 4 (real gaps, end-to-end)."""
     lines = ["\n## Experiment 4 — Real gaps, end-to-end\n"]
     if not records:
         lines.append("_exp04 did not run._\n")
@@ -138,6 +144,7 @@ def section_exp04(records) -> str:
 
 
 def main():
+    """Assemble the Phase 0 findings report from the four experiments' JSON results."""
     exp01 = load("exp01_train_region_control.json")
     exp02 = load("exp02_baselines.json")
     exp03 = load("exp03_decoded_metrics.json")

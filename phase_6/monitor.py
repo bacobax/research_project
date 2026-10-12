@@ -23,6 +23,7 @@ BASE = {  # songs17 seed family @300k (phase_3/results/seed_check): mean +- std
 
 
 def scalars():
+    """Read all TensorBoard scalar events of the run into {tag: [(step, value, wall_time)]}."""
     out = {}
     for f in sorted(glob.glob(str(RUN / "tb" / "events.out.tfevents.*"))):
         for ev in EventFileLoader(f).Load():
@@ -41,6 +42,7 @@ def scalars():
 
 
 def main():
+    """Print the progress report (step/ETA, latest train metrics, recent validation rows versus the baseline family) for the Phase 6 run."""
     argparse.ArgumentParser().parse_args()
     s = scalars()
     if "train/avg_nll" not in s:

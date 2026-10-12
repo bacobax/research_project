@@ -67,6 +67,7 @@ def append_summary_rows(rows: List[Dict[str, Any]]) -> None:
 
 
 def run_one(run_name: str, mask_lengths: Tuple[int, ...], device: Optional[str] = None) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Evaluate one run's checkpoint on the real holdout regions at each mask length, per activity band. Returns (records, summary rows)."""
     trainer = c.build_trainer(run_name, CHECKPOINT_TAG, device=device)
     step = trainer.global_step
     frame_rate = trainer.encoder.frame_rate
@@ -110,6 +111,7 @@ def run_one(run_name: str, mask_lengths: Tuple[int, ...], device: Optional[str] 
 
 
 def plot_degradation_curves(all_records: List[Dict[str, Any]], figures_dir: Path) -> None:
+    """Plot accuracy and audio metrics versus gap length (per band and run) into figures_dir as PNG+PDF."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -156,6 +158,7 @@ def plot_degradation_curves(all_records: List[Dict[str, Any]], figures_dir: Path
 
 
 def parse_args(argv=None) -> argparse.Namespace:
+    """CLI: runs to evaluate, mask lengths in frames, optional device override."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs", nargs="+", default=list(RUN_NAMES), choices=list(RUN_NAMES))
     parser.add_argument("--mask-lengths", nargs="+", type=int, default=list(MASK_LENGTHS))
@@ -164,6 +167,7 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 
 def main(argv=None) -> None:
+    """Run the sweep for each requested run, then save the JSON/CSV results and degradation figures."""
     args = parse_args(argv)
     mask_lengths = tuple(args.mask_lengths)
 

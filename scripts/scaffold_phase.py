@@ -12,11 +12,13 @@ RESULT_SUBDIRECTORIES = ("figures", "tables", "configs", "manifests")
 
 
 def _write_if_missing(path: Path, content: str) -> None:
+    """Write `content` to `path` only if the file does not exist (never overwrite)."""
     if not path.exists():
         path.write_text(content, encoding="utf-8")
 
 
 def scaffold_phase(repo_root: Path, phase_number: int) -> tuple[Path, Path]:
+    """Create phase_N/results (figures, tables, configs, manifests) and outputs/runs/phase_N with .gitkeep files and README stubs. Returns (raw_dir, results_dir)."""
     if phase_number < 0:
         raise ValueError("phase number must be non-negative")
 
@@ -68,6 +70,7 @@ paths and hashes in a provenance manifest.
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """CLI: phase number and optional --repo-root."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phase_number", type=int, help="Non-negative phase number")
     parser.add_argument(
@@ -80,6 +83,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry point: scaffold the phase and print the created locations."""
     args = parse_args(argv)
     try:
         raw_dir, results_dir = scaffold_phase(args.repo_root, args.phase_number)

@@ -14,6 +14,7 @@ dependencies = [
     "matplotlib",
     "numpy",
     "pyyaml",
+    "scipy>=1.17.1",
     "soundfile",
     "tensorboard",
     "torch",
@@ -23,6 +24,7 @@ dependencies = [
 ]
 
 [project.scripts]
+audio-infill-download = "audio_infill.download_data:main"
 audio-infill-dataset = "audio_infill.make_gapped_dataset:main"
 audio-infill-graph = "audio_infill.graph:main"
 audio-infill-train = "audio_infill.train:main"
@@ -31,6 +33,15 @@ audio-infill-train = "audio_infill.train:main"
 dev = [
     "pytest",
 ]
+notebooks = [
+    "ipykernel>=7.4.0",
+    "requests>=2.34.2",
+    "torchaudio>=2.11.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

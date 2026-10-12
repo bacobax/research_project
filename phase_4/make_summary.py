@@ -22,27 +22,32 @@ FAR_BIN = "[257,1000000)"
 
 
 def _load_json(name):
+    """Read a JSON file from the phase_4 results directory."""
     return json.loads((RESULTS / name).read_text())
 
 
 def _load_csv(path):
+    """Read a CSV into a list of row dicts."""
     with open(path, newline="", encoding="utf-8") as fh:
         return list(csv.DictReader(fh))
 
 
 def _table(header, rows):
+    """Render a Markdown table."""
     out = ["| " + " | ".join(header) + " |", "|" + "|".join("---" for _ in header) + "|"]
     out += ["| " + " | ".join(str(c) for c in r) + " |" for r in rows]
     return "\n".join(out)
 
 
 def section_runs(meta):
+    """Run/checkpoint metadata table."""
     rows = [(m["run"], m["checkpoint"], f"{m['step']:,}", m["d_model"], m["n_layers"], m["seq_len"],
              f"{m['mask_len_min']}-{m['mask_len_max']}") for m in meta]
     return _table(["run", "checkpoint", "step", "d_model", "layers", "seq_len", "trained gap (frames)"], rows)
 
 
 def section_h1(h1):
+    """H1 (mode averaging) results table."""
     rows = []
     for run in dict.fromkeys(r["run"] for r in h1):
         for band in BANDS:
@@ -63,6 +68,7 @@ def section_h1(h1):
 
 
 def section_h2(cells):
+    """H2 (RVQ hierarchy) results and slopes."""
     merged = [r for r in cells if r["aggregation"] == "merged_over_mask_len"]
     rows, slopes = [], []
     for run in dict.fromkeys(r["run"] for r in merged):
@@ -85,6 +91,7 @@ def section_h2(cells):
 
 
 def section_h3(rows):
+    """H3 (attention by distance) table."""
     d = defaultdict(list)
     for r in rows:
         d[(r["run"], r["layer"], r["distance_bin"])].append(float(r["value"]))
@@ -100,6 +107,7 @@ def section_h3(rows):
 
 
 def section_h4(h4):
+    """H4 (convergence) table."""
     rows = []
     for r in h4:
         gap = r["train_val_gap_at_checkpoint"]
@@ -111,7 +119,9 @@ def section_h4(h4):
 
 
 def section_fp(cons):
+    """fp32 vs fp16 validation consistency table."""
     def _f(x):
+        """Format a float to 3 decimals ('-' if missing)."""
         return "-" if x is None else f"{x:.3f}"  # runs without an exported metrics.csv have no logged value
 
     rows = [(c["run"], _f(c["max_abs_delta_vs_reference"]), _f(c["max_abs_delta_vs_historical"])) for c in cons]
@@ -119,6 +129,7 @@ def section_fp(cons):
 
 
 def section_exp02(exp02):
+    """Gradient-spike attribution table (exp02), de-duplicating checkpoints that share a step."""
     seen, rows = set(), []
     for r in exp02:
         key = (r["run"], r["step"])
@@ -134,6 +145,7 @@ def section_exp02(exp02):
 
 
 def section_exp03():
+    """STFT-ablation (exp03) section, or None if its results are absent."""
     d = RESULTS / "exp03_stft_ablation"
     if not (d / "summary.json").exists():
         return None
@@ -161,6 +173,7 @@ def section_exp03():
 
 
 def main():
+    """Assemble the Phase 4 results report from the JSON/CSV outputs."""
     meta = _load_json("run_metadata.json")
     h1 = _load_json("h1_mode_averaging.json")
     cells = _load_csv(RESULTS / "h2_cells.csv")

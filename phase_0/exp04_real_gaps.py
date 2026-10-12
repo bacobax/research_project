@@ -27,6 +27,7 @@ from audio_infill.train import AudioEncoder  # noqa: E402
 
 
 def run_one(run_name: str, checkpoint_tag: str, true_codes_cache: dict) -> list:
+    """Fill the real carved-out gaps with the model and baselines and score them against the encode-decode of the true audio for one (run, checkpoint). Returns (records, summary rows)."""
     trainer = c.build_trainer(run_name, checkpoint_tag)
     step = trainer.global_step
     sr = trainer.cfg.target_sr
@@ -107,6 +108,7 @@ def run_one(run_name: str, checkpoint_tag: str, true_codes_cache: dict) -> list:
 
 
 def main():
+    """Run the real-gap evaluation for every configured run/checkpoint (sharing a true-codes cache) and save the results."""
     all_records = []
     all_rows = []
     true_codes_cache: dict = {}

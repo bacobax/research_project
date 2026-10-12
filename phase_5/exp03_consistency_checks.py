@@ -49,6 +49,7 @@ TRAIN_DRAWS = 20_000
 
 @torch.no_grad()
 def logits_for(trainer, x: torch.Tensor, mask: torch.Tensor, fp16: bool) -> torch.Tensor:
+    """Model logits for window x with the `mask` frames set to the mask token, optionally under fp16 autocast."""
     dev = trainer.device
     xb = x.clone().long()
     xb[:, mask] = trainer.mask_token
@@ -60,6 +61,7 @@ def logits_for(trainer, x: torch.Tensor, mask: torch.Tensor, fp16: bool) -> torc
 
 
 def inference_window(trainer, g0: int, g1: int):
+    """Window [w0, w1) Trainer.inpaint_all_gaps would use around gap [g0, g1): context budget max_len - gap_len - 16 split evenly."""
     L = g1 - g0
     budget = max(0, trainer.cfg.max_len - L - 16)
     w0 = max(0, g0 - budget // 2)
@@ -68,6 +70,7 @@ def inference_window(trainer, g0: int, g1: int):
 
 
 def run_one(run: str, device: str) -> Dict:
+    """For one run: (a) 1 vs many inpaint iterations, (b) fp16 vs fp32 argmax agreement, (c) NLL vs SI-SDR checkpoint-selection correlation, (d) real-gap activity vs training distribution."""
     trainer = c.build_trainer(run, "best_val", device=device)
     trainer.model.eval()
     res: Dict = {"run": run, "step": trainer.global_step}
@@ -161,6 +164,7 @@ def selection_alignment() -> List[Dict]:
 
 
 def fig_selection(rows: List[Dict]) -> None:
+    """Scatter of validation NLL against gap-only SI-SDR across logged validation points."""
     ps.apply_style()
     import matplotlib.pyplot as plt
     n = len(rows)
@@ -201,11 +205,13 @@ def fig_selection(rows: List[Dict]) -> None:
 
 
 def _blue_cmap():
+    """Ordered blue colormap (light to dark) for step ordering."""
     from matplotlib.colors import LinearSegmentedColormap
     return LinearSegmentedColormap.from_list("blue_ord", ["#86b6ef", "#3987e5", "#1c5cab", "#0d366b"])
 
 
 def fig_activity(results: List[Dict]) -> None:
+    """Histogram of training mask activity with the real gaps marked."""
     ps.apply_style()
     import matplotlib.pyplot as plt
     r = results[0]["activity"]
@@ -226,6 +232,7 @@ def fig_activity(results: List[Dict]) -> None:
 
 
 def main() -> None:
+    """CLI: run the consistency checks for each run (or redraw figures with --figures-only) and write results."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--runs", nargs="+", default=list(DEFAULT_RUNS))
     ap.add_argument("--device", default="cuda:1")

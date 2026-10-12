@@ -25,6 +25,7 @@ HOP, SEQ = 320, 512
 
 
 def load(path: Path) -> torch.Tensor:
+    """Read a wav as mono float, require 24 kHz and peak-normalise; returns a [1, T] tensor."""
     a, sr = sf.read(str(path), always_2d=True)
     a = a.astype(np.float32).mean(axis=1)
     assert sr == 24000, f"{path} sr={sr}"
@@ -33,6 +34,7 @@ def load(path: Path) -> torch.Tensor:
 
 
 def main() -> None:
+    """CLI: measure (1) token agreement between windowed (warm-up + window) and whole-song zeroed encodings versus warm-up length and (2) the GPU cost of re-encoding a batch of windows."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--device", default="cuda:1")
     ap.add_argument("--songs", type=int, default=3)
