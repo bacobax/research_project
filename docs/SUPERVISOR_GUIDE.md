@@ -6,7 +6,7 @@ itself (git history, READMEs, configs, scripts). Related documents:
 
 - `SETUP.md`: installing uv, syncing the environment, launch scripts, data requirements.
 - `docs/interpreting_results.md`: how to read the metrics, tables and figures.
-- `experiment_log.md`: one row per training run, in chronological order.
+- `docs/experiment_log.md`: one row per training run, in chronological order.
 - `AGENTS.md`: repository conventions (layout, style, test expectations).
 
 ## 1. The project in three sentences
@@ -26,9 +26,9 @@ mismatches) and end with one final run that fixes the mismatches found.
 | `configs/data/*.yaml` | Dataset-generation templates (single gap, multigap, short gaps). |
 | `scripts/` | Thin shell wrappers (`run_train.sh`, `run_multigap_train.sh`, `resume.sh`, `smoke_test.sh`) that call `uv run audio-infill-train --config ...`. Also `scaffold_phase.py` (creates a new phase skeleton), `export_gap_audio_samples.py` (curated audio examples), (playlist download now lives in `audio-infill-download`, `src/audio_infill/download_data.py`). |
 | `phase_0/` ... `phase_6/` | One directory per research phase: analysis/export scripts, a `README.md`, and a `results/` folder with the portable outputs. See section 5. |
-| `experiment_log.md` | Table of every training run (changes made, hypothesis, key result, conclusion), plus notes on analysis-only phases. |
-| `RERUN_PLAN.md` | Audit of the STFT-loss `eps` bug that confounded some Phase 1-3 runs, the empirical evidence, and the rerun plan. Also records the answers to the supervisor's three questions (Q1 STFT impact, Q2 argmax decoding, Q3 gap-only vs gap+context loss). |
-| `HANDOFF.md` | Session handoff note written mid-project (Phase 4 era); good for context, but `experiment_log.md` and the phase READMEs are more current. |
+| `docs/experiment_log.md` | Table of every training run (changes made, hypothesis, key result, conclusion), plus notes on analysis-only phases. |
+| `docs/RERUN_PLAN.md` | Audit of the STFT-loss `eps` bug that confounded some Phase 1-3 runs, the empirical evidence, and the rerun plan. Also records the answers to the supervisor's three questions (Q1 STFT impact, Q2 argmax decoding, Q3 gap-only vs gap+context loss). |
+| `docs/archive/HANDOFF_2026-10-06.md` (archived, stale) | Session handoff note written mid-project (Phase 4 era); good for context, but `docs/experiment_log.md` and the phase READMEs are more current. |
 | `notebooks/` | Exploratory notebooks (activity map, codec test, decoder reconstruction debugging, post-training validation inspection, same-song retrieval baselines). Not part of the reproducible pipeline. |
 | `docs/figures/` | Architecture diagram (`network.png`, `network.dot`) and comparison figures. Result figures live in `phase_N/results/`, not here. |
 | `tests/` | `unittest`-style tests, also run by pytest: config parsing and schema, dataset logic, validation, decoded loss, early stopping, codebook conditioning, zeroed context, splice inference, phase export and scaffolding. |
@@ -108,7 +108,7 @@ uv run python phase_6/monitor.py
 
 Each phase README lists the exact commands and approximate runtimes; check it before launching.
 `phase_4` should only be run against checkpoints that are free of the STFT-eps bug (see
-`RERUN_PLAN.md`). To start a new phase, `uv run python scripts/scaffold_phase.py N` creates
+`docs/RERUN_PLAN.md`). To start a new phase, `uv run python scripts/scaffold_phase.py N` creates
 `phase_N/results/` (with `figures`, `tables`, `configs`, `manifests`), the raw directory
 `outputs/runs/phase_N/`, and a starter README.
 
@@ -138,7 +138,7 @@ Each phase README lists the exact commands and approximate runtimes; check it be
 | 5 | Supervisor Q3: is training consistent with inference? | evaluation only | Mostly yes; the real mismatch is how context is encoded at a real gap (zeroed gap changes later tokens), costing 2-4 dB SI-SDR. A pipeline issue, not a model issue. |
 | 6 | Does a run that fixes all found mismatches do better? | final training run | In progress at time of writing (launched 2026-10-12, 300k steps, 17 songs). Compare against the `songs17` seed family. |
 
-The `RERUN_PLAN.md` audit (grad-norm spikes from the STFT log-eps floor) affected some Phase 1-3 runs;
+The `docs/RERUN_PLAN.md` audit (grad-norm spikes from the STFT log-eps floor) affected some Phase 1-3 runs;
 the Phase B reruns showed that it did not change validation loss for the configs rerun.
 
 ## 5. Chronological narrative
@@ -151,8 +151,8 @@ the Phase B reruns showed that it did not change validation loss for the configs
    data scaling (Phase 1), regularization ablation (Phase 2), seed robustness and gap-length sweep (Phase 3),
    plus curated audio samples for the paper.
 5. **Early October 2026, audit:** supervisor questions led to the discovery of the STFT-eps confound;
-   `RERUN_PLAN.md` and `HANDOFF.md` written; affected runs rerun (2026-10-07 to 10-10) and Phases 1-3
-   re-exported; `experiment_log.md` started.
+   `docs/RERUN_PLAN.md` and `docs/archive/HANDOFF_2026-10-06.md` (archived, stale) written; affected runs rerun (2026-10-07 to 10-10) and Phases 1-3
+   re-exported; `docs/experiment_log.md` started.
 6. **10-11 October 2026, Phase 4:** H1-H4 diagnostics, gradient attribution (exp02), methods report.
 7. **12 October 2026, Phase 4 exp03 and Phase 5:** STFT-loss ablation write-up and the train/inference
    consistency experiments (Q3).
@@ -163,7 +163,7 @@ the Phase B reruns showed that it did not change validation loss for the configs
 
 | I want to see | Go to |
 |---|---|
-| The overall story and the key numbers per run | `experiment_log.md` |
+| The overall story and the key numbers per run | `docs/experiment_log.md` |
 | Phase 0 evidence that the measurements are valid | `phase_0/results/FINDINGS.md`, `phase_0/README.md` |
 | The data-scaling table and curves | `phase_1/results/README.md`, `phase_1/results/figures/`, `phase_1/results/tables/` |
 | Regularization vs. data | `phase_2/results/`, `phase_3/results/seed_check/README.md` |
@@ -171,8 +171,8 @@ the Phase B reruns showed that it did not change validation loss for the configs
 | Why the model underfits (H1-H4) | `phase_4/results/FINDINGS.md`, `phase_4/results/figures/`, how-it-was-done in `phase_4/METHODS.md` |
 | STFT-loss impact (Q1) | `phase_4/results/exp03_stft_ablation/` (`stft_ablation.png`, `comparison.csv`), `phase_4/results/exp02/` |
 | Train vs. inference consistency (Q3) | `phase_5/README.md` (aspect table), `phase_5/METHODS.md`, `phase_5/results/*/figures/` |
-| Argmax decoding and gap-only loss audit (Q2, Q3 code audit) | `RERUN_PLAN.md` section 6 |
-| The STFT-eps bug and the reruns | `RERUN_PLAN.md`, `experiment_log.md` (rerun rows) |
+| Argmax decoding and gap-only loss audit (Q2, Q3 code audit) | `docs/RERUN_PLAN.md` section 6 |
+| The STFT-eps bug and the reruns | `docs/RERUN_PLAN.md`, `docs/experiment_log.md` (rerun rows) |
 | The final run's design and status | `phase_6/README.md`, `configs/train/phase6_final_songs17_seed43.yaml`, `phase_6/monitor.py` |
 | Listenable examples | `phase_N/results/audio_samples/` (small curated WAVs; phases 1-4) |
 | How to interpret metrics and figures | `docs/interpreting_results.md` |
