@@ -15,6 +15,7 @@ Every diagnostic is evaluated on held-out validation examples of the key single-
 | phase3_regularization_seed44 | best_val | 25,000 | 128 | 4 | 512 | 1-4 |
 | phase3_songs17_seed43 | best_val | 20,000 | 256 | 4 | 512 | 1-4 |
 | phase3_songs17_seed44 | best_val | 280,000 | 256 | 4 | 512 | 1-4 |
+| phase4_stft_off_seed43 | best_val | 300,000 | 128 | 4 | 512 | 1-4 |
 
 ## H1 - do the per-codebook heads collapse to the marginal token distribution?
 
@@ -38,10 +39,12 @@ Means over the 8 codebooks. 'Marginal-predictor NLL' is the NLL of a context-fre
 | phase3_songs17_seed43 | low | 3.38 | 0.56 | 3.47 | 5.20 | 8/8 | 0.113 | 0.119 |
 | phase3_songs17_seed44 | high | 5.74 | 0.95 | 7.00 | 7.54 | 8/8 | 0.000 | 0.037 |
 | phase3_songs17_seed44 | low | 2.90 | 0.48 | 2.92 | 5.17 | 8/8 | 0.055 | 0.194 |
+| phase4_stft_off_seed43 | high | 5.29 | 0.90 | 6.85 | 7.52 | 8/8 | 0.011 | 0.027 |
+| phase4_stft_off_seed43 | low | 3.49 | 0.59 | 3.18 | 4.88 | 8/8 | 0.033 | 0.128 |
 
 ## H2 - does quality degrade with codebook index?
 
-NLL slope per codebook is positive (later codebooks worse) in 8/8 high-activity and 7/8 low-activity run/band pairs. Count-weighted over gap lengths and positions; each cell has n=8.
+NLL slope per codebook is positive (later codebooks worse) in 9/9 high-activity and 8/9 low-activity run/band pairs. Count-weighted over gap lengths and positions; each cell has n=8.
 
 | run | band | NLL codebook 1 | NLL codebook 8 | NLL slope / codebook | top-1 codebook 1 | top-1 codebook 8 |
 |---|---|---|---|---|---|---|
@@ -61,6 +64,8 @@ NLL slope per codebook is positive (later codebooks worse) in 8/8 high-activity 
 | phase3_songs17_seed43 | low | 2.25 | 3.72 | +0.08 | 0.250 | 0.100 |
 | phase3_songs17_seed44 | high | 6.53 | 7.08 | +0.14 | 0.087 | 0.000 |
 | phase3_songs17_seed44 | low | 2.03 | 3.18 | +0.12 | 0.388 | 0.163 |
+| phase4_stft_off_seed43 | high | 5.57 | 7.33 | +0.18 | 0.075 | 0.013 |
+| phase4_stft_off_seed43 | low | 2.25 | 3.20 | +0.04 | 0.200 | 0.163 |
 
 ## H3 - how concentrated is cross-attention near the gap?
 
@@ -76,6 +81,7 @@ Ratio of the mean attention weight per context column at distance 1 frame from t
 | phase3_regularization_seed44 | 188x | 80x | 118x | 69x |
 | phase3_songs17_seed43 | 18x | 14x | 17x | 30x |
 | phase3_songs17_seed44 | 1x | 28x | 124x | 55x |
+| phase4_stft_off_seed43 | 14x | 25x | 50x | 14x |
 
 ## H4 - convergence of held-out loss
 
@@ -106,6 +112,7 @@ Largest per-group difference between the fp32 batch-of-1 evaluation used by H1/H
 | phase3_regularization_seed44 | 0.001 | 0.001 |
 | phase3_songs17_seed43 | 0.000 | 0.000 |
 | phase3_songs17_seed44 | 0.094 | 0.094 |
+| phase4_stft_off_seed43 | 0.031 | - |
 
 ## Exp02 - which loss term produces the gradient? (STFT evidence)
 
@@ -141,3 +148,31 @@ Pre-clip gradient L2 norm of each loss term, back-propagated separately on 100 t
 | phase3_songs17_seed44 | 300,000 | 52.3 | 1.15 | 0.017 | 2.2% | 1273 | 0.01 |
 
 Across all measured checkpoints the STFT term's gradient norm is 1.5%-6.5% of the token-loss gradient norm (median over batches).
+
+## Exp03 - STFT-loss training ablation (decoded loss ON vs OFF)
+
+Matched twins: regularized single song, seed 43, 300k steps; the OFF run is identical except `decoded_loss_enabled: false`. ON = `phase3_regularization_seed43` (weight 0.1). Seed std = std of the regularization family's best-at-cutoff values over seeds 42/43/44. Verdict rule fixed in advance: |diff| < 1 std no detectable effect, 1-2 std inconclusive, > 2 std effect.
+
+Final step (300,000; also the best-validation step for both runs):
+
+| metric | decoded loss ON | decoded loss OFF | OFF - ON | seed std (family) | |diff| / std | verdict |
+|---|---|---|---|---|---|---|
+| val/combined_loss | +5.0247 | +5.0111 | -0.0136 | 0.01982 | 0.69 | no detectable effect |
+| val/high_acc_top1 | +0.0195 | +0.0238 | +0.0042 | 0.007719 | 0.55 | no detectable effect |
+| val/low_acc_top1 | +0.1217 | +0.1172 | -0.0046 | 0.01465 | 0.31 | no detectable effect |
+| val/si_sdr_db_gap_only | -7.5916 | -7.0118 | +0.5798 | 0.9013 | 0.64 | no detectable effect |
+| val/si_sdr_db | +11.6762 | +11.4663 | -0.2098 | - | - | no seed-noise reference |
+| val/spectral_convergence_gap_only | +0.6923 | +0.6785 | -0.0138 | - | - | no seed-noise reference |
+| val/spectral_convergence | +0.1909 | +0.1914 | +0.0005 | - | - | no seed-noise reference |
+| train/avg_nll | +4.1173 | +4.1195 | +0.0022 | - | - | no seed-noise reference |
+
+Across all 12 validation points (every 25k steps):
+
+| metric | validation points | mean diff (in std) | max |diff| (in std) | fraction > 1 std | fraction > 2 std |
+|---|---|---|---|---|---|
+| val/combined_loss | 12 | -0.39 | 0.87 | 0.00 | 0.00 |
+| val/high_acc_top1 | 12 | +0.22 | 0.55 | 0.00 | 0.00 |
+| val/low_acc_top1 | 12 | +0.11 | 0.69 | 0.00 | 0.00 |
+| val/si_sdr_db_gap_only | 12 | +0.25 | 1.40 | 0.25 | 0.00 |
+
+One seed per arm: effects below the seed spread cannot be resolved, so 'no detectable effect' is not 'no effect'. Figure: `results/exp03_stft_ablation/stft_ablation.png`.

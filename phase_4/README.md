@@ -38,6 +38,8 @@ refusal) if asked to anyway.
   the token loss, the decoded-domain STFT term and the decoded-domain waveform-L1 term
   *separately* on 100 training batches per checkpoint and records each gradient norm, plus the
   model's weight norm. The STFT-loss evidence. See "Exp02" below and `METHODS.md`.
+- `exp03_stft_ablation.py` — paired comparison of the two STFT-ablation twins (post-processing of
+  TensorBoard scalars, no GPU); `--self-check` validates it against the exported seed-check numbers.
 - `make_summary.py` — regenerates `results/FINDINGS.md` (cross-run tables for H1-H4, the fp16/fp32
   check and exp02) from the result files. No GPU needed.
 - `METHODS.md` — how each analysis was done, step by step, with caveats.
@@ -63,6 +65,7 @@ uv run python phase_4/exp01_underfitting_diagnostics.py --device cuda:1 --runs \
   phase1_songs01 phase1_songs17 phase1_songs04 phase2_regularization \
   phase3_regularization_seed43 phase3_regularization_seed44 phase3_songs17_seed43 phase3_songs17_seed44
 uv run python phase_4/exp02_gradient_spike_sources.py --device cuda:1   # all runs in CHECKPOINT_PLAN
+uv run python phase_4/exp03_stft_ablation.py                            # STFT ablation comparison
 uv run python phase_4/make_summary.py                                   # -> results/FINDINGS.md
 ```
 
@@ -203,3 +206,49 @@ Answering that needs the matched training ablation (`decoded_loss_enabled: false
 data as `phase3_songs17_seed43`), which has **not** been run. Separately, validation NLL of the
 four reruns is unchanged from the original runs (e.g. `phase2_regularization` 4.995 vs 4.9936),
 so the eps fix did not move held-out loss.
+
+## Exp03 — STFT-loss training ablation (answers supervisor Q2 for this setting)
+
+**Design.** Matched twins: regularized single song, seed 43, 300,000 steps. The ON run is
+`phase3_regularization_seed43` (decoded STFT/waveform loss, weight 0.1); the OFF run is
+`phase4_stft_off_seed43` (`configs/train/phase4_stft_off_seed43.yaml`), identical except
+`decoded_loss_enabled: false`. Method and the decision rule: `METHODS.md` Section 7.
+
+**Twin check.** Training loss is bit-identical to the ON run before step 7000, when the decoded loss
+would start (max difference 5e-5), and the token loss stays within about 1e-4 afterwards, so the
+comparison is paired batch-for-batch.
+
+**Result (step 300,000, the best-validation step of both runs).** Differences are OFF minus ON,
+in units of the seed-to-seed std of the regularization family (`phase_3/results/seed_check`):
+
+| metric | ON | OFF | OFF - ON | / seed std |
+|---|---|---|---|---|
+| validation NLL | 5.0247 | 5.0111 | -0.014 | 0.69 |
+| high-activity top-1 | 0.0195 | 0.0238 | +0.004 | 0.55 |
+| low-activity top-1 | 0.1217 | 0.1172 | -0.005 | 0.31 |
+| gap-only SI-SDR (dB) | -7.59 | -7.01 | +0.58 | 0.64 |
+
+Over all 12 validation points (every 25k steps) no metric differs by more than 2 seed-std
+(largest: gap-only SI-SDR, 1.40 std at step 75k); NLL is slightly lower with the loss off at 10 of
+12 points (mean -0.4 std), gap-only SI-SDR has no consistent sign. Figure:
+`results/exp03_stft_ablation/stft_ablation.png`; tables: `results/FINDINGS.md`.
+
+**Conclusion.** **No detectable effect** of the STFT loss in this setting, and no sign that it improves the
+decoded-audio metrics. This agrees with exp02 (the term is 1.5-6.5% of the gradient norm). Limits: one
+seed per arm and one loss weight (0.1), so effects below the seed spread cannot be excluded ("no
+detectable effect" is not "no effect"); the 17-song models were not tested. The natural extension is a
+seed-44 twin (~10 h) or a larger weight.
+
+**H1-H3 on the two twins' final checkpoints** (`results/FINDINGS.md`). The structural diagnostics also
+agree: predicted entropy / train-marginal entropy 0.90 (OFF) vs 0.89 (ON) in the high band and 0.59 vs
+0.59 in the low band; NLL on codebook 1 / 8 in the high band 5.57 / 7.33 vs 5.61 / 7.39; model NLL beats
+the marginal predictor on all 8 codebooks in both. Cross-attention concentration (ratio of the weight at
+distance 1 to the weight at >=257 frames) matches in layers 0, 1 and 3 (14x/25x/14x vs 13x/26x/15x);
+layer 2 differs (50x vs 581x), but that ratio divides by a very small far-context weight and is
+noisy with 2 examples per band. Real-gap audio from the OFF twin is in
+`results/audio_samples/phase4_stft_off_seed43/`, next to the ON twin's in
+`phase_3/results/audio_samples/phase3_regularization_seed43/`. `eps_bug_clean` is true for the OFF twin
+(same epsilon/clip as its ON twin); this flag was set in the saved outputs rather than by a rerun, since
+the numbers are deterministic. The OFF twin has no exported `metrics.csv`, so H4 and the logged-value
+column of the fp16 check are not available for it.
+

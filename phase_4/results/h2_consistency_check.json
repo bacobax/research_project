@@ -1414,5 +1414,182 @@
     "reference_vs_historical_agreement": 1.1932867405306524e-07,
     "note": "LARGER THAN EXPECTED (max |delta|=0.094 nats): H2's fp32 batch-of-1 cells differ from BOTH the in-process fp16 reference and the historical fp16 metrics.csv, while reference and historical agree with each other to <1.2e-07 nats. That rules out a batch-size or dataset-construction bug in H2's reduction -- this is a genuine fp16-autocast-vs-fp32 evaluation-precision effect on this checkpoint, large enough to be worth reporting on its own (comparable in scale to the data-scaling headline effect sizes), not something to wave away as noise.",
     "run": "phase3_songs17_seed44"
+  },
+  {
+    "comparisons": [
+      {
+        "tag": "val/high_len_1_loss",
+        "h2_reduction": 7.144911907613277,
+        "in_process_reference": 7.139923095703125,
+        "historical_metrics_csv": null,
+        "delta_vs_reference": 0.004988811910152435,
+        "delta_vs_historical": null
+      },
+      {
+        "tag": "val/high_len_1_acc_top1",
+        "h2_reduction": 0.0,
+        "in_process_reference": 0.0,
+        "historical_metrics_csv": null,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": null
+      },
+      {
+        "tag": "val/high_len_2_loss",
+        "h2_reduction": 6.745201078243554,
+        "in_process_reference": 6.768550872802734,
+        "historical_metrics_csv": null,
+        "delta_vs_reference": -0.023349794559180737,
+        "delta_vs_historical": null
+      },
+      {
+        "tag": "val/high_len_2_acc_top1",
+        "h2_reduction": 0.046875,
+        "in_process_reference": 0.046875,
+        "historical_metrics_csv": null,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": null
+      },
+      {
+        "tag": "val/high_len_3_loss",
+        "h2_reduction": 6.849170145268242,
+        "in_process_reference": 6.85412073135376,
+        "historical_metrics_csv": null,
+        "delta_vs_reference": -0.004950586085517905,
+        "delta_vs_historical": null
+      },
+      {
+        "tag": "val/high_len_3_acc_top1",
+        "h2_reduction": 0.020833333333333332,
+        "in_process_reference": 0.02083333395421505,
+        "historical_metrics_csv": null,
+        "delta_vs_reference": -6.208817175668013e-10,
+        "delta_vs_historical": null
+      },
+      {
+        "tag": "val/high_len_4_loss",
+        "h2_reduction": 6.827941743889824,
+        "in_process_reference": 6.830909729003906,
+        "historical_metrics_csv": null,
+        "delta_vs_reference": -0.002967985114082694,
+        "delta_vs_historical": null
+      },
+      {
+        "tag": "val/high_len_4_acc_top1",
+        "h2_reduction": 0.02734375,
+        "in_process_reference": 0.02734375,
+        "historical_metrics_csv": null,
+        "delta_vs_reference": 0.0,
+        "delta_vs_historical": null
+      },
+      {
+        "tag": "val/high_loss",
+        "h2_reduction": 6.891806218753724,
+        "in_process_reference": 6.898376107215881,
+        "historical_metrics_csv": null,
+        "delta_vs_reference": -0.006569888462157003,
+        "delta_vs_historical": null
+      },
+      {
+        "tag": "val/high_acc_top1",
+        "h2_reduction": 0.023763020833333332,
+        "in_process_reference": 0.023763020988553762,
+        "historical_metrics_csv": null,
+        "delta_vs_reference": -1.5522043025906207e-10,
+        "delta_vs_historical": null
+      },
+      {
+        "tag": "val/low_len_1_loss",
+        "h2_reduction": 2.9626124664209783,
+        "in_process_reference": 2.987255096435547,
+        "historical_metrics_csv": null,
+        "delta_vs_reference": -0.024642630014568567,
+        "delta_vs_historical": null
+      },
+      {
+        "tag": "val/low_len_1_acc_top1",
+        "h2_reduction": 0.140625,
+        "in_process_reference": 0.109375,
+        "historical_metrics_csv": null,
+        "delta_vs_reference": 0.03125,
+        "delta_vs_historical": null
+      },
+      {
+        "tag": "val/low_len_2_loss",
+        "h2_reduction": 3.047102636890486,
+        "in_process_reference": 3.046839714050293,
+        "historical_metrics_csv": null,
+        "delta_vs_reference": 0.000262922840192914,
+        "delta_vs_historical": null
+      },
+      {
+        "tag": "val/low_len_2_acc_top1",
+        "h2_reduction": 0.1484375,
+        "in_process_reference": 0.140625,
+        "historical_metrics_csv": null,
+        "delta_vs_reference": 0.0078125,
+        "delta_vs_historical": null
+      },
+      {
+        "tag": "val/low_len_3_loss",
+        "h2_reduction": 3.15590154286474,
+        "in_process_reference": 3.1613845825195312,
+        "historical_metrics_csv": null,
+        "delta_vs_reference": -0.005483039654791355,
+        "delta_vs_historical": null
+      },
+      {
+        "tag": "val/low_len_3_acc_top1",
+        "h2_reduction": 0.13541666666666666,
+        "in_process_reference": 0.125,
+        "historical_metrics_csv": null,
+        "delta_vs_reference": 0.010416666666666657,
+        "delta_vs_historical": null
+      },
+      {
+        "tag": "val/low_len_4_loss",
+        "h2_reduction": 3.3065923964604735,
+        "in_process_reference": 3.299785614013672,
+        "historical_metrics_csv": null,
+        "delta_vs_reference": 0.0068067824468016624,
+        "delta_vs_historical": null
+      },
+      {
+        "tag": "val/low_len_4_acc_top1",
+        "h2_reduction": 0.109375,
+        "in_process_reference": 0.09375,
+        "historical_metrics_csv": null,
+        "delta_vs_reference": 0.015625,
+        "delta_vs_historical": null
+      },
+      {
+        "tag": "val/low_loss",
+        "h2_reduction": 3.1180522606591694,
+        "in_process_reference": 3.1238162517547607,
+        "historical_metrics_csv": null,
+        "delta_vs_reference": -0.0057639910955913365,
+        "delta_vs_historical": null
+      },
+      {
+        "tag": "val/low_acc_top1",
+        "h2_reduction": 0.13346354166666666,
+        "in_process_reference": 0.1171875,
+        "historical_metrics_csv": null,
+        "delta_vs_reference": 0.016276041666666657,
+        "delta_vs_historical": null
+      },
+      {
+        "tag": "val/combined_loss",
+        "h2_reduction": 5.004929239706447,
+        "in_process_reference": 5.011096179485321,
+        "historical_metrics_csv": null,
+        "delta_vs_reference": -0.006166939778873726,
+        "delta_vs_historical": null
+      }
+    ],
+    "max_abs_delta_vs_reference": 0.03125,
+    "max_abs_delta_vs_historical": null,
+    "reference_vs_historical_agreement": null,
+    "note": "Deltas are within the ~1e-2 nat range expected from fp16-vs-fp32 evaluation precision.",
+    "run": "phase4_stft_off_seed43"
   }
 ]

@@ -414,5 +414,57 @@
       2,
       3
     ]
+  },
+  {
+    "run": "phase4_stft_off_seed43",
+    "checkpoint": "best_val",
+    "step": 300000,
+    "eps_bug_clean": true,
+    "examples": [
+      {
+        "band": "high_activity",
+        "example_id": 0,
+        "window_start": 13527,
+        "mask_start": 120,
+        "mask_mean_activity": 0.7905809283256531,
+        "left_ctx_len": 120,
+        "right_ctx_len": 388
+      },
+      {
+        "band": "high_activity",
+        "example_id": 1,
+        "window_start": 14290,
+        "mask_start": 246,
+        "mask_mean_activity": 0.8901622891426086,
+        "left_ctx_len": 246,
+        "right_ctx_len": 262
+      },
+      {
+        "band": "low_activity",
+        "example_id": 0,
+        "window_start": 28329,
+        "mask_start": 500,
+        "mask_mean_activity": 0.3224225640296936,
+        "left_ctx_len": 500,
+        "right_ctx_len": 8
+      },
+      {
+        "band": "low_activity",
+        "example_id": 1,
+        "window_start": 27789,
+        "mask_start": 376,
+        "mask_mean_activity": 0.17500001192092896,
+        "left_ctx_len": 376,
+        "right_ctx_len": 132
+      }
+    ],
+    "seq_len": 512,
+    "mask_len": 4,
+    "layers": [
+      0,
+      1,
+      2,
+      3
+    ]
   }
 ]

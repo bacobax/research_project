@@ -1,0 +1,144 @@
+{
+ "cutoff_step": 300000,
+ "noise_reference": "regularization_ablation std over seeds 42/43/44 (phase_3/results/seed_check/family_summary.csv; std of best-at-cutoff values)",
+ "final": {
+  "step_on": 300000,
+  "step_off": 300000,
+  "metrics": {
+   "val/combined_loss": {
+    "on": 5.024694442749023,
+    "off": 5.011096000671387,
+    "off_minus_on": -0.013598442077636719,
+    "seed_std": 0.019818460097647563,
+    "z": 0.6861502866840217,
+    "verdict": "no detectable effect"
+   },
+   "val/high_acc_top1": {
+    "on": 0.01953125,
+    "off": 0.02376302145421505,
+    "off_minus_on": 0.00423177145421505,
+    "seed_std": 0.007719260761236196,
+    "z": 0.5482094186357497,
+    "verdict": "no detectable effect"
+   },
+   "val/low_acc_top1": {
+    "on": 0.1217447966337204,
+    "off": 0.1171875,
+    "off_minus_on": -0.004557296633720398,
+    "seed_std": 0.014653259310855241,
+    "z": 0.3110090756630724,
+    "verdict": "no detectable effect"
+   },
+   "val/si_sdr_db_gap_only": {
+    "on": -7.591618061065674,
+    "off": -7.0118327140808105,
+    "off_minus_on": 0.5797853469848633,
+    "seed_std": 0.9013441854896365,
+    "z": 0.6432452289797675,
+    "verdict": "no detectable effect"
+   },
+   "val/si_sdr_db": {
+    "on": 11.676161766052246,
+    "off": 11.466348648071289,
+    "off_minus_on": -0.20981311798095703,
+    "seed_std": null,
+    "z": null,
+    "verdict": "no seed-noise reference"
+   },
+   "val/spectral_convergence_gap_only": {
+    "on": 0.6923091411590576,
+    "off": 0.6785393357276917,
+    "off_minus_on": -0.013769805431365967,
+    "seed_std": null,
+    "z": null,
+    "verdict": "no seed-noise reference"
+   },
+   "val/spectral_convergence": {
+    "on": 0.19087651371955872,
+    "off": 0.19139595329761505,
+    "off_minus_on": 0.0005194395780563354,
+    "seed_std": null,
+    "z": null,
+    "verdict": "no seed-noise reference"
+   },
+   "train/avg_nll": {
+    "on": 4.117333889007568,
+    "off": 4.119546890258789,
+    "off_minus_on": 0.002213001251220703,
+    "seed_std": null,
+    "z": null,
+    "verdict": "no seed-noise reference"
+   }
+  }
+ },
+ "best_at_cutoff": {
+  "step_on": 300000,
+  "step_off": 300000,
+  "metrics": {
+   "val/combined_loss": {
+    "on": 5.024694442749023,
+    "off": 5.011096000671387,
+    "off_minus_on": -0.013598442077636719,
+    "seed_std": 0.019818460097647563,
+    "z": 0.6861502866840217,
+    "verdict": "no detectable effect"
+   },
+   "val/high_acc_top1": {
+    "on": 0.01953125,
+    "off": 0.02376302145421505,
+    "off_minus_on": 0.00423177145421505,
+    "seed_std": 0.007719260761236196,
+    "z": 0.5482094186357497,
+    "verdict": "no detectable effect"
+   },
+   "val/low_acc_top1": {
+    "on": 0.1217447966337204,
+    "off": 0.1171875,
+    "off_minus_on": -0.004557296633720398,
+    "seed_std": 0.014653259310855241,
+    "z": 0.3110090756630724,
+    "verdict": "no detectable effect"
+   },
+   "val/si_sdr_db_gap_only": {
+    "on": -7.591618061065674,
+    "off": -7.0118327140808105,
+    "off_minus_on": 0.5797853469848633,
+    "seed_std": 0.9013441854896365,
+    "z": 0.6432452289797675,
+    "verdict": "no detectable effect"
+   },
+   "val/si_sdr_db": {
+    "on": 11.676161766052246,
+    "off": 11.466348648071289,
+    "off_minus_on": -0.20981311798095703,
+    "seed_std": null,
+    "z": null,
+    "verdict": "no seed-noise reference"
+   },
+   "val/spectral_convergence_gap_only": {
+    "on": 0.6923091411590576,
+    "off": 0.6785393357276917,
+    "off_minus_on": -0.013769805431365967,
+    "seed_std": null,
+    "z": null,
+    "verdict": "no seed-noise reference"
+   },
+   "val/spectral_convergence": {
+    "on": 0.19087651371955872,
+    "off": 0.19139595329761505,
+    "off_minus_on": 0.0005194395780563354,
+    "seed_std": null,
+    "z": null,
+    "verdict": "no seed-noise reference"
+   },
+   "train/avg_nll": {
+    "on": 4.117333889007568,
+    "off": 4.119546890258789,
+    "off_minus_on": 0.002213001251220703,
+    "seed_std": null,
+    "z": null,
+    "verdict": "no seed-noise reference"
+   }
+  }
+ }
+}
