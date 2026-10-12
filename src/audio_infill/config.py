@@ -122,6 +122,16 @@ class TrainConfig:
     validation_audio_metrics_enabled: bool = False
     validation_audio_metrics_max_examples: Optional[int] = None
 
+    # Phase 6: train/inference-consistency options (defaults reproduce the earlier behaviour).
+    zeroed_context_prob: float = 0.0   # share of training windows whose context is re-encoded from audio with the gap zeroed
+    zeroed_context_warmup_frames: int = 300  # extra frames encoded before the window so the causal encoder state settles
+    codebook_conditioning: str = "none"  # "none" (independent heads) or "depth_ar" (head k sees tokens of codebooks < k)
+    depth_layers: int = 2
+    validation_autocast: bool = True   # False evaluates validation in fp32
+    audio_selection_metric: Optional[str] = None  # e.g. "si_sdr_db": also keep best_audio.pt selected on it
+    inpaint_output_mode: str = "decode_all"  # "decode_all" or "splice" (only the gap's samples replace the original)
+    tb_log_figures: bool = True  # False: no matplotlib figures in TensorBoard (they were ~97% of event-file size)
+
 
 def validate_train_config(cfg: TrainConfig):
     if cfg.seq_len <= 0:
@@ -239,6 +249,18 @@ def validate_train_config(cfg: TrainConfig):
         raise ValueError("early_stopping_min_delta must be >= 0")
     if cfg.validation_audio_metrics_max_examples is not None and cfg.validation_audio_metrics_max_examples <= 0:
         raise ValueError("validation_audio_metrics_max_examples must be > 0 when provided")
+    if not 0.0 <= cfg.zeroed_context_prob <= 1.0:
+        raise ValueError("zeroed_context_prob must be in [0, 1]")
+    if cfg.zeroed_context_warmup_frames < 0:
+        raise ValueError("zeroed_context_warmup_frames must be >= 0")
+    if cfg.codebook_conditioning not in {"none", "depth_ar"}:
+        raise ValueError("codebook_conditioning must be 'none' or 'depth_ar'")
+    if cfg.depth_layers <= 0:
+        raise ValueError("depth_layers must be > 0")
+    if cfg.audio_selection_metric not in {None, "si_sdr_db", "si_sdr_db_gap_only"}:
+        raise ValueError("audio_selection_metric must be None, 'si_sdr_db' or 'si_sdr_db_gap_only'")
+    if cfg.inpaint_output_mode not in {"decode_all", "splice"}:
+        raise ValueError("inpaint_output_mode must be 'decode_all' or 'splice'")
 
 
 def _parse_simple_yaml_value(raw: str) -> Any:
