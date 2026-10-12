@@ -31,8 +31,61 @@ uv run audio-infill-graph --help
 ```
 
 Some tests and training configurations expect audio and annotation files under
-`data/processed/`. These files are not tracked by Git and must be generated or
-copied into place separately.
+`data/processed/`. These files are not tracked by Git; the next section
+regenerates them.
+
+## Reproduce From Scratch
+
+Heavy artifacts (`data/`, `dataset/`, `outputs/`, checkpoints) are never
+committed. Everything downloaded from the internet is fetched by one
+idempotent, checksum-aware tool, `audio-infill-download`
+(`src/audio_infill/download_data.py`), driven by `configs/data/download.yaml`
+(YouTube video IDs, output filenames, EnCodec weight URL + sha256) and
+`configs/data/dataset_manifest.json` (reference sha256/frames of each WAV).
+System requirement: `ffmpeg` on `PATH` (`sudo apt install -y ffmpeg`).
+
+```bash
+uv sync --locked
+uv run audio-infill-download --help
+scripts/download_data.sh                       # 17 playlist WAVs -> dataset/, EnCodec weights -> torch hub cache
+uv run audio-infill-download --verify          # offline checksum check of everything (exit 1 on problems)
+
+# Pivot recording: not downloadable automatically (upstream URL was not recorded).
+# Place the exact file at data/nuvole_bianche.mp3 (sha256 in configs/data/download.yaml; --verify checks it).
+
+uv run audio-infill-dataset --config configs/data/nuvole_bianche_short_gaps.yaml   # -> data/processed/nuvole_bianche_short_gaps/
+scripts/smoke_test.sh                          # fast pipeline check
+uv run audio-infill-train --config configs/train/phase6_final_songs17_seed43.yaml  # final run
+uv run pytest -q
+```
+
+Useful flags: `--only {playlist,weights}`, `--dry-run`, `--limit N`,
+`--strict` (treat audio checksum mismatches as errors), `--update-manifest`
+(re-pin checksums of files on disk).
+
+Caveats on bit-exactness:
+
+- The weights download is hard-verified by sha256. Playlist audio is re-encoded
+  by YouTube/ffmpeg and videos can change, so a fresh download may differ from
+  the manifest; mismatches are warnings by default. Playlist entry 008 already
+  drifted upstream (it is excluded from training, so results are unaffected).
+- Some legacy tests (`test_config_parsing`, `test_dataset_logic`,
+  `test_decoded_loss`, `test_train_config_schema`, `test_validation_config`)
+  need the old fixtures `data/processed/single_gap/` and
+  `data/processed/multigap/` built from `data/raw/wav_test.wav`, whose source
+  was never recorded; they fail on a clean checkout (8 failures, the rest pass).
+
+## Seeds and Determinism
+
+- Every train config has a `seed` (default 42; the multi-seed phase 3/6 runs use
+  43/44). `set_seed` (`train.py`) seeds `random`, `numpy`, `torch` and all CUDA
+  devices; the validation pool uses `seed + 1009`. Override with `--seed`.
+- Dataset generation (`audio-infill-dataset`) draws gap positions from
+  `random.Random(seed)`; the seed is in each `configs/data/*.yaml` (42).
+- cuDNN deterministic mode is not forced, and AMP/fp16 plus nondeterministic CUDA
+  kernels mean reruns on the same seed match closely but not bit-for-bit,
+  and results can differ across GPU models and torch versions (the lockfile pins
+  the latter). Phase 3 quantifies seed-to-seed spread.
 
 ## Launch Scripts
 

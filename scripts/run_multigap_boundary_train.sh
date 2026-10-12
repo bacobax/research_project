@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Train the encoder-decoder multi-gap model with boundary conditioning (lighter variant).
+# Override the config with CONFIG_PATH=...; extra args are forwarded to audio-infill-train.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

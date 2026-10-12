@@ -1,3 +1,7 @@
+"""Export a graphviz (torchviz) view of the JointCodebookInfiller autograd graph to docs/figures.
+Model hyperparameters can come from a train config YAML or CLI flags; a dummy gapped input is used.
+"""
+
 import argparse
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +16,7 @@ from audio_infill.train import JointCodebookInfiller
 
 @dataclass
 class GraphConfig:
+    """Settings for the graph export: model size, dummy-input shape and output file names."""
     config: Optional[str] = None
     d_model: int = 512
     n_heads: int = 8
@@ -28,6 +33,7 @@ class GraphConfig:
 
 
 def parse_args(argv=None) -> GraphConfig:
+    """Parse CLI flags into a GraphConfig (defaults < --config train YAML < explicit flags) and validate it."""
     parser = argparse.ArgumentParser(description="Export a graphviz view of the infiller model")
     parser.add_argument("--config", type=str, default=None, help="Optional train config YAML to source model hyperparameters from")
     parser.add_argument("--d-model", type=int, default=None)
@@ -80,6 +86,7 @@ def parse_args(argv=None) -> GraphConfig:
 
 
 def validate_graph_config(cfg: GraphConfig):
+    """Raise ValueError for non-positive sizes or negative dropout."""
     for name in ["d_model", "n_heads", "n_layers", "max_len", "codebooks", "bins", "batch_size", "time_steps"]:
         if getattr(cfg, name) <= 0:
             raise ValueError(f"{name} must be > 0")
@@ -88,6 +95,7 @@ def validate_graph_config(cfg: GraphConfig):
 
 
 def main(argv=None):
+    """Build the model, run a dummy forward pass with a masked gap, and save the .dot (and PNG if graphviz is installed)."""
     cfg = parse_args(argv)
 
     model = JointCodebookInfiller(

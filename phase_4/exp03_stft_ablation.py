@@ -53,10 +53,12 @@ METRICS: Dict[str, Tuple[bool, Optional[str]]] = {
 
 
 def series(points, tag: str) -> Dict[int, float]:
+    """{step: value} for one tag, limited to steps <= CUTOFF_STEP."""
     return {p.step: p.value for p in points if p.tag == tag and p.step <= CUTOFF_STEP}
 
 
 def best_at_cutoff(points) -> Tuple[int, Dict[str, float]]:
+    """Step with the lowest val/combined_loss (within the cutoff) and all METRICS at that step."""
     comb = series(points, "val/combined_loss")
     step = min(comb, key=lambda s: (comb[s], s))
     vals = {tag: series(points, tag).get(step) for tag in METRICS}
@@ -64,18 +66,21 @@ def best_at_cutoff(points) -> Tuple[int, Dict[str, float]]:
 
 
 def final_values(points) -> Tuple[int, Dict[str, float]]:
+    """Metrics at the last evaluated step within the cutoff."""
     comb = series(points, "val/combined_loss")
     step = max(comb)
     return step, {tag: series(points, tag).get(step) for tag in METRICS}
 
 
 def family_std() -> Dict[str, float]:
+    """Seed-to-seed std per metric from the Phase 3 family table (the noise reference for verdicts)."""
     with open(FAMILY_CSV, newline="") as fh:
         row = next(r for r in csv.DictReader(fh) if r["family"] == FAMILY)
     return {tag: float(row[col]) for tag, (_, col) in METRICS.items() if col}
 
 
 def verdict(delta: float, std: Optional[float], higher_better: bool) -> str:
+    """Classify delta against seed noise in units of seed std: below 1 sigma = no detectable effect, below 2 = inconclusive, else the direction of the STFT-off effect."""
     if std is None:
         return "no seed-noise reference"
     z = abs(delta) / std
@@ -109,6 +114,7 @@ def self_check() -> None:
 
 
 def make_figure(on: Dict[str, Dict[int, float]], off: Dict[str, Dict[int, float]], std: Dict[str, float]) -> None:
+    """Plot STFT-loss ON vs OFF curves for the key validation metrics."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -138,6 +144,7 @@ def make_figure(on: Dict[str, Dict[int, float]], off: Dict[str, Dict[int, float]
 
 
 def main() -> None:
+    """CLI: compare the STFT-loss ON run with its OFF twin and write the comparison table, summary JSON and figure (--self-check validates the ON numbers first)."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--self-check", action="store_true", help="validate the on-run numbers against phase_3's export and exit")
     args = ap.parse_args()

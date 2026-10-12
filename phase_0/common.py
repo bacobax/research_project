@@ -63,31 +63,39 @@ class RecordingWriter:
     programmatically. Trainer.run_validation() only calls add_scalar/flush on its writer."""
 
     def __init__(self) -> None:
+        """Start with an empty list of recorded (name, value, step) scalars."""
         self.scalars: List[Tuple[str, float, int]] = []
 
     def add_scalar(self, name: str, value: float, step: int) -> None:
+        """Record a scalar instead of writing it to TensorBoard."""
         self.scalars.append((name, float(value), int(step)))
 
     def add_figure(self, *args, **kwargs) -> None:
+        """Ignored (figures are not recorded)."""
         pass  # inspection is disabled on cfg, but be defensive
 
     def flush(self) -> None:
+        """No-op (nothing is buffered)."""
         pass
 
     def close(self) -> None:
+        """No-op (nothing to close)."""
         pass
 
     def latest(self, tag: str) -> Optional[float]:
+        """Most recently recorded value for `tag`, or None."""
         for name, value, _ in reversed(self.scalars):
             if name == tag:
                 return value
         return None
 
     def as_dict(self) -> Dict[str, float]:
+        """Last value per scalar name."""
         return {name: value for name, value, _ in self.scalars}
 
 
 def _checkpoints(run_dir: str, tags: Sequence[str] = ("best_val", "best", "final")) -> Dict[str, Path]:
+    """Map checkpoint tags to outputs/runs/<run_dir>/checkpoints/<tag>.pt paths."""
     return {tag: REPO_ROOT / f"outputs/runs/{run_dir}/checkpoints/{tag}.pt" for tag in tags}
 
 
@@ -552,6 +560,7 @@ def fill_baseline(name: str, example: FixedValidationExample, rng: np.random.Gen
 
 
 def token_accuracy(filled: torch.Tensor, example: FixedValidationExample) -> Dict[str, float]:
+    """Top-1 token accuracy over the masked span of `example` (all codebooks), plus the masked token count."""
     m0, m1 = int(example.mask_start), int(example.mask_start + example.mask_len)
     pred = filled[:, m0:m1]
     tgt = example.y[:, m0:m1]
@@ -560,17 +569,20 @@ def token_accuracy(filled: torch.Tensor, example: FixedValidationExample) -> Dic
 
 
 def si_sdr_db(pred: np.ndarray, target: np.ndarray, eps: float = 1e-9) -> float:
+    """Scale-invariant SDR (dB) of pred vs target; higher is better."""
     alpha = float(np.dot(pred, target)) / (float(np.dot(target, target)) + eps)
     e = pred - alpha * target
     return float(10.0 * np.log10((np.mean((alpha * target) ** 2) + eps) / (np.mean(e**2) + eps)))
 
 
 def snr_db(pred: np.ndarray, target: np.ndarray, eps: float = 1e-9) -> float:
+    """Plain signal-to-noise ratio (dB) of pred vs target."""
     e = pred - target
     return float(10.0 * np.log10((np.mean(target**2) + eps) / (np.mean(e**2) + eps)))
 
 
 def log_mel_l1(pred: np.ndarray, target: np.ndarray, sr: int, n_mels: int = 80, eps: float = 1e-7) -> float:
+    """Mean L1 distance between log-mel spectrograms; FFT size adapts to short crops, NaN if fewer than 4 samples."""
     import librosa
 
     n = min(len(pred), len(target))
@@ -585,6 +597,7 @@ def log_mel_l1(pred: np.ndarray, target: np.ndarray, sr: int, n_mels: int = 80, 
 
 
 def build_stft_loss(trainer: Trainer) -> MultiResolutionSTFTLoss:
+    """Build the multi-resolution STFT loss with the run's decoded_loss_* settings."""
     cfg = trainer.cfg
     return MultiResolutionSTFTLoss(
         n_ffts=cfg.decoded_loss_n_ffts,
@@ -596,6 +609,7 @@ def build_stft_loss(trainer: Trainer) -> MultiResolutionSTFTLoss:
 
 
 def stft_metrics(pred: np.ndarray, target: np.ndarray, stft_loss: MultiResolutionSTFTLoss) -> Dict[str, float]:
+    """Multi-resolution STFT loss components (prefixed stft_) for two waveforms, zero-padded to the largest window if short."""
     pred_t = torch.from_numpy(pred.astype(np.float32)).unsqueeze(0)
     tgt_t = torch.from_numpy(target.astype(np.float32)).unsqueeze(0)
     n = min(pred_t.shape[1], tgt_t.shape[1])
@@ -611,6 +625,7 @@ def stft_metrics(pred: np.ndarray, target: np.ndarray, stft_loss: MultiResolutio
 
 
 def audio_metrics(pred_audio: np.ndarray, target_audio: np.ndarray, sr: int, stft_loss: MultiResolutionSTFTLoss) -> Dict[str, float]:
+    """All decoded-audio metrics (waveform L1/MSE, SI-SDR, SNR, log-mel L1, STFT terms) on the common length of pred and target."""
     n = min(len(pred_audio), len(target_audio))
     pred = np.asarray(pred_audio[:n], dtype=np.float64)
     target = np.asarray(target_audio[:n], dtype=np.float64)
@@ -626,6 +641,7 @@ def audio_metrics(pred_audio: np.ndarray, target_audio: np.ndarray, sr: int, stf
 
 
 def crop_frame_bounds(seq_len: int, mask_start: int, mask_len: int, margin_frames: int) -> Tuple[int, int]:
+    """Frame range [lo, hi) covering the mask plus margin_frames on each side, clipped to the window."""
     lo = max(0, int(mask_start) - int(margin_frames))
     hi = min(int(seq_len), int(mask_start) + int(mask_len) + int(margin_frames))
     return lo, hi
@@ -722,12 +738,14 @@ def build_real_gap_example(
 
 
 def save_json(path: Path, obj: Any) -> None:
+    """Write obj as indented JSON, creating parent directories (non-serialisable values become strings)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(obj, f, indent=2, default=str)
 
 
 def append_summary_rows(rows: List[Dict[str, Any]]) -> None:
+    """Append rows to the shared summary CSV (SUMMARY_COLUMNS), writing the header on first use."""
     SUMMARY_CSV.parent.mkdir(parents=True, exist_ok=True)
     write_header = not SUMMARY_CSV.exists()
     with open(SUMMARY_CSV, "a", newline="", encoding="utf-8") as f:

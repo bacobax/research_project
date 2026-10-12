@@ -1,13 +1,17 @@
+# Input audio, output directory, and gap geometry (gap lengths in seconds, number of gaps and their minimum spacing).
 wav: data/nuvole_bianche.mp3
 outdir: data/processed/nuvole_bianche_short_gaps
 gap_seconds: [0.015, 0.020, 0.030, 0.050]
 num_gaps: 4
 min_gap_separation_seconds: 1.0
+# Codec sample rate and EnCodec bandwidth (kbps).
 target_sr: 24000
 bandwidth: 6.0
+# Where gaps are placed (random within margin_seconds of the edges), RNG seed, and token-length cap/padding options.
 center_mode: random
 margin_seconds: 2.0
 seed: 42
 max_len_cap: 512
 prefer_pow2: false
+# Extra context (seconds) kept around each gap in the exported crop.
 extra_ctx_s: 2.0

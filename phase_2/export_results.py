@@ -89,6 +89,7 @@ _CHECKPOINT_STEP_RE = re.compile(r"Saved checkpoint: .*?/final\.pt \(step (\d+)\
 
 @dataclass(frozen=True)
 class ScalarPoint:
+    """One TensorBoard scalar sample (tag, step, wall time, value)."""
     tag: str
     step: int
     wall_time: float
@@ -97,6 +98,7 @@ class ScalarPoint:
 
 @dataclass
 class RunExport:
+    """A run's parsed scalars plus its summary row and per-group rows, as consumed by the plotting/table writers."""
     name: str
     run_dir: Path
     points: list[ScalarPoint]
@@ -109,6 +111,7 @@ class RunExport:
 
 
 def _sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    """Hex SHA-256 of a file, read in chunks (provenance hashes)."""
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         while chunk := handle.read(chunk_size):
@@ -117,10 +120,12 @@ def _sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
 
 
 def _utc_timestamp(timestamp: float) -> str:
+    """Format a unix timestamp as an ISO-8601 UTC string ending in 'Z'."""
     return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _run_command(repo_root: Path, args: Sequence[str]) -> str:
+    """Run a command in repo_root and return stripped stdout, or '' if it fails (e.g. git unavailable)."""
     try:
         return subprocess.check_output(
             list(args), cwd=repo_root, stderr=subprocess.DEVNULL, text=True
@@ -130,6 +135,7 @@ def _run_command(repo_root: Path, args: Sequence[str]) -> str:
 
 
 def _scalar_category(tag: str) -> str:
+    """Classify a TensorBoard tag by prefix into the category written to the scalar manifest."""
     if tag.startswith("val/"):
         return "validation_metric"
     if tag.startswith("train/avg_"):
@@ -181,6 +187,7 @@ def load_scalar_points(tb_dir: Path) -> list[ScalarPoint]:
 def _point_value(
     points: Mapping[tuple[str, int], ScalarPoint], tag: str, step: int, *, required: bool = True
 ) -> float | None:
+    """Value of (tag, step), raising if missing and required, else None."""
     point = points.get((tag, step))
     if point is None:
         if required:
@@ -190,11 +197,13 @@ def _point_value(
 
 
 def _latest_value(points: Iterable[ScalarPoint], tag: str) -> float | None:
+    """Value of the latest (step, wall-time) point for a tag, or None."""
     matches = [point for point in points if point.tag == tag]
     return max(matches, key=lambda point: (point.step, point.wall_time)).value if matches else None
 
 
 def _read_json(path: Path) -> dict[str, Any]:
+    """Load a JSON file that must contain an object."""
     with path.open(encoding="utf-8") as handle:
         value = json.load(handle)
     if not isinstance(value, dict):
@@ -203,6 +212,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _parse_run_log(log_path: Path) -> dict[str, Any]:
+    """Extract runtime, stop reason (early stop / divergence / completed) and final step from a run's training log."""
     text = log_path.read_text(encoding="utf-8", errors="replace")
     timestamps = [datetime.strptime(value, "%Y-%m-%d %H:%M:%S") for value in _LOG_TIMESTAMP_RE.findall(text)]
     runtime_seconds = int((timestamps[-1] - timestamps[0]).total_seconds()) if len(timestamps) >= 2 else None
@@ -253,6 +263,7 @@ def _log_info_from_tensorboard(run_dir: Path, points: Iterable[ScalarPoint]) -> 
 
 
 def _validate_run(run_dir: Path) -> None:
+    """Require the run's songs manifest, best_val/final checkpoints and TensorBoard events to exist."""
     required = (
         run_dir / "songs.json",
         run_dir / "checkpoints" / "best_val.pt",
@@ -266,12 +277,14 @@ def _validate_run(run_dir: Path) -> None:
 
 
 def _token_frame_rate(config: Mapping[str, Any]) -> float:
+    """Token frames per second (EnCodec 24 kHz: 75) with an explicit config override."""
     # EnCodec at 24 kHz uses 75 frames/s for the bandwidths used by these runs.
     # Keep the fallback explicit so other configs can provide their measured rate.
     return float(config.get("token_frame_rate", 75.0))
 
 
 def _condition_label(config: Mapping[str, Any]) -> str:
+    """Legend label for a run's regularisation condition (d_model, dropout, weight decay)."""
     return (
         f"d_model={config.get('d_model')}, dropout={config.get('dropout')}, "
         f"wd={config.get('weight_decay')}"
@@ -279,6 +292,7 @@ def _condition_label(config: Mapping[str, Any]) -> str:
 
 
 def analyze_run(name: str, run_dir: Path, config: Mapping[str, Any]) -> RunExport:
+    """Parse one run: locate the best validation step by val/combined_loss and build its summary and per-group metric rows."""
     _validate_run(run_dir)
     points = load_scalar_points(run_dir / "tb")
     by_tag_step = {(point.tag, point.step): point for point in points}
@@ -361,6 +375,7 @@ def analyze_run(name: str, run_dir: Path, config: Mapping[str, Any]) -> RunExpor
 
 
 def _write_csv(path: Path, fieldnames: Sequence[str], rows: Iterable[Mapping[str, Any]]) -> None:
+    """Write rows to a CSV with the given columns (extra keys ignored, LF line endings)."""
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore", lineterminator="\n")
         writer.writeheader()
@@ -369,12 +384,14 @@ def _write_csv(path: Path, fieldnames: Sequence[str], rows: Iterable[Mapping[str
 
 
 def _format_float(value: Any, digits: int = 4) -> str:
+    """Format a number to fixed digits ('--' if missing)."""
     if value is None or value == "":
         return "--"
     return f"{float(value):.{digits}f}"
 
 
 def _tex_escape(value: Any) -> str:
+    """Escape LaTeX special characters in a cell."""
     text = str(value)
     for source, replacement in (
         ("\\", r"\textbackslash{}"),
@@ -388,6 +405,7 @@ def _tex_escape(value: Any) -> str:
 
 
 def _write_summary_tex(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
+    """Write the per-run summary as a booktabs LaTeX table."""
     lines = [
         "% Generated by phase_2/export_results.py; requires \\usepackage{booktabs}.",
         r"\begin{tabular}{lrrrrrrr}",
@@ -413,6 +431,7 @@ def _write_summary_tex(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
 
 
 def _write_groups_tex(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
+    """Write the per-activity-band/gap-length metrics as a booktabs LaTeX table."""
     lines = [
         "% Generated by phase_2/export_results.py; requires \\usepackage{booktabs}.",
         r"\begin{tabular}{llrrrrr}",
@@ -437,16 +456,19 @@ def _write_groups_tex(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
 
 
 def _series(run: RunExport, tag: str) -> tuple[list[int], list[float]]:
+    """Sorted (steps, values) for one tag of a run."""
     selected = sorted((p for p in run.points if p.tag == tag), key=lambda p: p.step)
     return [point.step for point in selected], [point.value for point in selected]
 
 
 def _style_axes(ax: plt.Axes) -> None:
+    """Light grid and no top/right spines for all figures."""
     ax.grid(True, alpha=0.25, linewidth=0.7)
     ax.spines[["top", "right"]].set_visible(False)
 
 
 def _save_figure(fig: plt.Figure, base_path: Path) -> None:
+    """Save a figure as PNG and PDF (PDF metadata fixed for reproducible output) and close it."""
     fig.savefig(base_path.with_suffix(".png"), dpi=180, bbox_inches="tight")
     fig.savefig(
         base_path.with_suffix(".pdf"),
@@ -457,6 +479,7 @@ def _save_figure(fig: plt.Figure, base_path: Path) -> None:
 
 
 def _plot_validation_loss(runs: Sequence[RunExport], figures_dir: Path) -> None:
+    """Plot val/combined_loss versus step for every run, marking the best step."""
     fig, ax = plt.subplots(figsize=(7.2, 4.4))
     colors = plt.get_cmap("tab10")
     for index, run in enumerate(runs):
@@ -475,6 +498,7 @@ def _plot_validation_loss(runs: Sequence[RunExport], figures_dir: Path) -> None:
 
 
 def _plot_validation_audio_metrics(runs: Sequence[RunExport], figures_dir: Path) -> None:
+    """Plot the gap-only audio validation metrics versus step for every run."""
     fig, axes = plt.subplots(1, 2, figsize=(10.2, 4.0))
     colors = plt.get_cmap("tab10")
     for index, run in enumerate(runs):
@@ -499,6 +523,7 @@ def _plot_validation_audio_metrics(runs: Sequence[RunExport], figures_dir: Path)
 
 
 def _plot_validation_accuracy(runs: Sequence[RunExport], figures_dir: Path) -> None:
+    """Plot high- and low-activity top-1 validation accuracy versus step."""
     fig, axes = plt.subplots(1, 2, figsize=(10.2, 4.0), sharey=True)
     colors = plt.get_cmap("tab10")
     for ax, band, title in zip(axes, ("high", "low"), ("High activity", "Low activity")):
@@ -517,6 +542,7 @@ def _plot_validation_accuracy(runs: Sequence[RunExport], figures_dir: Path) -> N
 
 
 def _plot_training_loss(runs: Sequence[RunExport], figures_dir: Path) -> None:
+    """Plot the aggregated training loss versus step."""
     fig, ax = plt.subplots(figsize=(7.2, 4.4))
     for run in runs:
         steps, values = _series(run, "train/avg_loss")
@@ -529,6 +555,7 @@ def _plot_training_loss(runs: Sequence[RunExport], figures_dir: Path) -> None:
 
 
 def _plot_best_by_gap(runs: Sequence[RunExport], figures_dir: Path) -> None:
+    """Plot best-checkpoint loss and accuracy by gap length for each activity band."""
     fig, axes = plt.subplots(2, 2, figsize=(10.2, 7.2), sharex=True)
     for row_index, band in enumerate(("high_activity", "low_activity")):
         for run in runs:
@@ -553,12 +580,14 @@ def _plot_best_by_gap(runs: Sequence[RunExport], figures_dir: Path) -> None:
 
 
 def _find_bundle(run: RunExport, group_name: str) -> Path | None:
+    """Path of the first saved validation bundle.pt for a group at the run's best step, or None."""
     group_dir = run.run_dir / "samples" / "validation" / f"step_{run.best_step}" / group_name
     candidates = sorted(group_dir.glob("*/bundle.pt"))
     return candidates[0] if candidates else None
 
 
 def _spectrogram(ax: plt.Axes, audio: np.ndarray, sample_rate: int, title: str) -> None:
+    """Draw a magma spectrogram with an FFT size adapted to the clip length."""
     nfft = min(1024, max(64, 2 ** int(math.floor(math.log2(max(64, audio.size // 8))))))
     noverlap = nfft // 2
     ax.specgram(audio, NFFT=nfft, Fs=sample_rate, noverlap=noverlap, cmap="magma")
@@ -568,6 +597,7 @@ def _spectrogram(ax: plt.Axes, audio: np.ndarray, sample_rate: int, title: str) 
 
 
 def _plot_qualitative_group(runs: Sequence[RunExport], figures_dir: Path, group_name: str) -> bool:
+    """Qualitative spectrogram comparison of target/predictions across runs for one validation group; False if bundles are missing."""
     import torch
 
     bundles = [_find_bundle(run, group_name) for run in runs]
@@ -599,6 +629,7 @@ def _copy_snapshots(
     runs: Sequence[RunExport],
     config_paths: Mapping[str, Path],
 ) -> None:
+    """Copy each run's config and song manifest into the export for self-contained provenance."""
     config_dir = output_root / "configs"
     manifest_dir = output_root / "song_manifests"
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -623,6 +654,7 @@ def _provenance(
     config_paths: Mapping[str, Path],
     command: str,
 ) -> dict[str, Any]:
+    """Provenance JSON: command, git state, hashes of runtime code/configs and raw artifacts for every exported value."""
     runtime_paths = [
         Path("src/audio_infill/train.py"),
         Path("src/audio_infill/config.py"),
@@ -674,6 +706,7 @@ def _provenance(
 
 
 def _write_readme(output_root: Path, runs: Sequence[RunExport], qualitative: Sequence[str]) -> None:
+    """Write the README of the exported results (summary table, figure list, regeneration command)."""
     summary_lines = []
     for run in runs:
         row = run.summary
@@ -751,6 +784,7 @@ def export_results(
     output_root: Path,
     command: str,
 ) -> list[RunExport]:
+    """Run the full export: analyse runs, write CSV/LaTeX tables, figures, snapshots, provenance and README under output_root. Returns the analysed runs."""
     repo_root = repo_root.resolve()
     input_root = (repo_root / input_root).resolve() if not input_root.is_absolute() else input_root.resolve()
     output_root = (repo_root / output_root).resolve() if not output_root.is_absolute() else output_root.resolve()
@@ -818,6 +852,7 @@ def export_results(
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """CLI: runs, input/output roots and repo root."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs", nargs="+", default=list(DEFAULT_RUNS), help="Run directory names")
     parser.add_argument("--input-root", type=Path, default=DEFAULT_INPUT_ROOT)
@@ -827,6 +862,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry point: run the export, print where the results went, return 0."""
     args = parse_args(argv)
     command = "uv run python phase_2/export_results.py --runs {} --input-root {} --output-root {}".format(
         " ".join(args.runs), args.input_root.as_posix(), args.output_root.as_posix()

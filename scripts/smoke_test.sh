@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Fast end-to-end pipeline check using the smallest training config (configs/train/smoke.yaml).
+# Override the config with CONFIG_PATH=...; extra args are forwarded to audio-infill-train.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

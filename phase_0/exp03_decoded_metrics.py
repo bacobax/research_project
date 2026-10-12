@@ -26,6 +26,7 @@ import common as c  # noqa: E402
 
 
 def run_one(run_name: str, checkpoint_tag: str) -> list:
+    """Decode the model's and each baseline's fills on the gap+margin crop and score the audio for one (run, checkpoint). Returns (records, summary rows)."""
     trainer = c.build_trainer(run_name, checkpoint_tag)
     step = trainer.global_step
     sr = trainer.cfg.target_sr
@@ -87,6 +88,7 @@ def run_one(run_name: str, checkpoint_tag: str) -> list:
 
 
 def main():
+    """Run the decoded-audio comparison for every configured run/checkpoint and save the results."""
     all_records = []
     all_rows = []
     for run_name, run in c.RUNS.items():

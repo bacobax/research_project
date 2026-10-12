@@ -127,6 +127,7 @@ FAMILY_FIELDS = (
 
 @dataclass
 class RunAtCutoff:
+    """Best-validation point of one run restricted to steps <= the cutoff, with its identity (family, seed) and metrics."""
     name: str
     family: str
     seed: int
@@ -144,6 +145,7 @@ class RunAtCutoff:
 
 
 def analyze_run_at_cutoff(spec: Mapping[str, Any], cutoff_step: int) -> RunAtCutoff:
+    """Load a run's TensorBoard scalars, drop everything after cutoff_step, and pick the best val/combined_loss point (the one difference from phase_1/phase_2's analysis)."""
     run_dir: Path = spec["run_dir"]
     _validate_run(run_dir)
     points = load_scalar_points(run_dir / "tb")
@@ -179,6 +181,7 @@ def analyze_run_at_cutoff(spec: Mapping[str, Any], cutoff_step: int) -> RunAtCut
 
 
 def family_summary(runs: Sequence[RunAtCutoff]) -> list[dict[str, Any]]:
+    """Mean and sample std (over seeds) of the best-at-cutoff metrics for each run family."""
     families: dict[str, list[RunAtCutoff]] = {}
     for run in runs:
         families.setdefault(run.family, []).append(run)
@@ -188,6 +191,7 @@ def family_summary(runs: Sequence[RunAtCutoff]) -> list[dict[str, Any]]:
         members = sorted(members, key=lambda r: r.seed)
 
         def _mean_std(attr: str) -> tuple[float, float]:
+            """Mean and sample std of an attribute over the members (std is NaN with fewer than two values)."""
             values = [getattr(m, attr) for m in members if getattr(m, attr) is not None]
             if len(values) < 2:
                 return (values[0] if values else float("nan")), float("nan")
@@ -210,7 +214,9 @@ def family_summary(runs: Sequence[RunAtCutoff]) -> list[dict[str, Any]]:
 
 
 def _write_family_tex(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
+    """Write the per-family summary table as a LaTeX fragment."""
     def fmt(mean: Any, std: Any, digits: int = 4) -> str:
+        """LaTeX 'mean $\pm$ std' cell ('--' when missing)."""
         if mean is None or (isinstance(mean, float) and mean != mean):
             return "--"
         if std is None or (isinstance(std, float) and std != std):
@@ -238,6 +244,7 @@ def _write_family_tex(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
 
 
 def _plot_seed_check(runs: Sequence[RunAtCutoff], cutoff_step: int, figures_dir: Path) -> None:
+    """Plot val/combined_loss curves up to the cutoff for every run (colour = family, line style = seed)."""
     fig, ax = plt.subplots(figsize=(8.0, 5.0))
     colors = {"songs17_data_scaling": "tab:blue", "regularization_ablation": "tab:orange"}
     linestyles = {42: "-", 43: "--", 44: ":"}
@@ -262,6 +269,7 @@ def _plot_seed_check(runs: Sequence[RunAtCutoff], cutoff_step: int, figures_dir:
 
 
 def _provenance(runs: Sequence[RunAtCutoff], cutoff_step: int, command: str) -> dict[str, Any]:
+    """Provenance record: command, cutoff, run directories, configs and data mtimes for the exported results."""
     raw_runs: dict[str, Any] = {}
     latest_mtime = 0.0
     config_relpaths = {
@@ -307,7 +315,9 @@ def _provenance(runs: Sequence[RunAtCutoff], cutoff_step: int, command: str) -> 
 
 
 def _write_readme(output_root: Path, family_rows: Sequence[Mapping[str, Any]], cutoff_step: int) -> None:
+    """Write the README of the exported seed-check results (family table and caveats)."""
     def fmt(mean: Any, std: Any, digits: int = 4) -> str:
+        """Markdown 'mean ± std' cell ('(n=1)' when there is a single run)."""
         if mean is None or (isinstance(mean, float) and mean != mean):
             return "--"
         if std is None or (isinstance(std, float) and std != std):
@@ -356,6 +366,7 @@ uv run python phase_3/export_seed_check.py
 
 
 def export_seed_check(*, output_root: Path, cutoff_step: int, command: str) -> list[RunAtCutoff]:
+    """Produce the whole seed-check export (tables, figures, provenance, README) under output_root. Returns the analysed runs."""
     output_root.mkdir(parents=True, exist_ok=True)
     figures_dir = output_root / "figures"
     tables_dir = output_root / "tables"
@@ -393,6 +404,7 @@ def export_seed_check(*, output_root: Path, cutoff_step: int, command: str) -> l
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """CLI: --cutoff-step and --output-root."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cutoff-step", type=int, default=CUTOFF_STEP_DEFAULT)
     parser.add_argument("--output-root", type=Path, default=OUTPUT_ROOT_DEFAULT)
@@ -400,6 +412,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry point: run the export, print each run's best-at-cutoff summary, return 0."""
     args = parse_args(argv)
     command = f"uv run python phase_3/export_seed_check.py --cutoff-step {args.cutoff_step} --output-root {args.output_root.as_posix()}"
     runs = export_seed_check(output_root=args.output_root, cutoff_step=args.cutoff_step, command=command)

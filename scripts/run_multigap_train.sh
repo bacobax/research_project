@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Train the multi-gap model with decoded-loss validation (v2 config).
+# Override the config with CONFIG_PATH=...; extra args are forwarded to audio-infill-train.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

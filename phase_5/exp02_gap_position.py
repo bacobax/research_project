@@ -45,6 +45,7 @@ TRAIN_DRAWS = 20_000
 
 @torch.no_grad()
 def token_metrics(trainer, codes: torch.Tensor, w0: int, w1: int, g0: int, g1: int) -> Dict[str, float]:
+    """Token NLL/top-1 accuracy of the gap [g0, g1) when predicted from window [w0, w1) of the codes (gap masked)."""
     x = codes[:, w0:w1].clone().long()
     T = w1 - w0
     mask = torch.zeros(T, dtype=torch.bool)
@@ -62,6 +63,7 @@ def token_metrics(trainer, codes: torch.Tensor, w0: int, w1: int, g0: int, g1: i
 
 
 def region_bands(grouped: Dict, holdout_ranges) -> List[Dict]:
+    """Band (high/low activity) of each held-out region, by majority vote of its validation examples."""
     regions = []
     for rs, re_ in holdout_ranges:
         bands = [("high" if k.startswith("high") else "low") for k, exs in grouped.items() if "_len_" in k
@@ -72,6 +74,7 @@ def region_bands(grouped: Dict, holdout_ranges) -> List[Dict]:
 
 
 def run_one(run: str, device: str) -> Dict:
+    """For one run: sample the training sampler's gap positions, then score the same held-out gaps at shifted window positions and the inference-style window."""
     trainer = c.build_trainer(run, "best_val", device=device)
     trainer.model.eval()
     cfg = trainer.cfg
@@ -115,11 +118,13 @@ def run_one(run: str, device: str) -> Dict:
 
 
 def mean_ci(v):
+    """Mean and 95% CI half-width (NaN with one value)."""
     v = np.asarray(v, float)
     return float(v.mean()), float(1.96 * v.std(ddof=1) / math.sqrt(len(v))) if len(v) > 1 else float("nan")
 
 
 def fig_train_distribution(metas: List[Dict]) -> None:
+    """Histogram of gap start positions drawn by the training sampler."""
     ps.apply_style()
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(9.5, 3.4))
@@ -135,6 +140,7 @@ def fig_train_distribution(metas: List[Dict]) -> None:
 
 
 def fig_position_effect(rows: List[Dict]) -> None:
+    """Figure of NLL/accuracy versus gap position in the window, per band."""
     ps.apply_style()
     import matplotlib.pyplot as plt
     runs = sorted({r["run"] for r in rows})
@@ -168,6 +174,7 @@ def fig_position_effect(rows: List[Dict]) -> None:
 
 
 def summarize(rows: List[Dict]) -> List[Dict]:
+    """Per-band summary: edge positions versus the centre position, and the inference-style window versus the centre."""
     out = []
     for band in ("high", "low", "all"):
         sel = [r for r in rows if band == "all" or r["band"] == band]
@@ -185,6 +192,7 @@ def summarize(rows: List[Dict]) -> List[Dict]:
 
 
 def main() -> None:
+    """CLI: run the gap-position experiment for each run and write CSV/JSON results and figures."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--runs", nargs="+", default=list(DEFAULT_RUNS))
     ap.add_argument("--device", default="cuda:1")

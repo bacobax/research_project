@@ -1,0 +1,54 @@
+# Sources for every artifact that is downloaded from the internet or must be supplied by hand.
+# Consumed by `uv run audio-infill-download` (see src/audio_infill/download_data.py).
+# Checksums for the reference copies live in configs/data/dataset_manifest.json.
+
+# Directory the playlist WAVs are written to (training configs use `extra_wavs_dir: dataset`).
+output_dir: dataset
+
+playlist:
+  url: https://www.youtube.com/playlist?list=OLAK5uy_ld5G3KIUyG3vyVf7wDhdmRExJIf0u1fzw
+  # Standardized output format (ffmpeg): mono, 24 kHz, 16-bit PCM WAV.
+  sample_rate: 24000
+  channels: 1
+  # Entries are pinned by video ID and output filename, NOT by live playlist titles or
+  # positions (titles/positions on YouTube drift; entry 008 already has).
+  # `training: false` entries are downloaded only so numbering matches the reference dataset.
+  entries:
+    - {index: 1, video_id: "biSuBx4w0F0", filename: "001_Einaudi_Le_Onde.wav"}
+    - {index: 2, video_id: "MCExtikQceI", filename: "002_Ludovico_Einaudi_-_Nefeli_Visualiser.wav"}
+    - {index: 3, video_id: "AR1NetSdT2I", filename: "003_Einaudi_Melodia_Africana_III.wav"}
+    - {index: 4, video_id: "QEQxoH80vdE", filename: "004_Ludovico_Einaudi_-_Memory_One_Visualiser.wav"}
+    - {index: 5, video_id: "3RW-9qW8XZY", filename: "005_Einaudi_I_Giorni.wav"}
+    - {index: 6, video_id: "t_r5pb0R03g", filename: "006_Einaudi_In_Un_Altra_Vita.wav"}
+    - {index: 7, video_id: "IukERq7ROO4", filename: "007_Ludovico_Einaudi_-_Una_Mattina_Visualizer.wav"}
+    - {index: 8, video_id: "wTeRQ16O798", filename: "008_Ludovico_Einaudi_-_Nuvole_Bianche_Official_Visualiser.wav", training: false}
+    - {index: 9, video_id: "qnEyeq9ydlA", filename: "009_Ludovico_Einaudi_-_Monday_Official_Visualizer.wav"}
+    - {index: 10, video_id: "o7hTPDuAcEU", filename: "010_Ludovico_Einaudi_-_Jay.wav"}
+    - {index: 11, video_id: "dxSun1xYrvU", filename: "011_Ludovico_Einaudi_-_Birdsong_from_DAY_2_Official_Video.wav"}
+    - {index: 12, video_id: "dGR-a8nyTWs", filename: "012_Ludovico_Einaudi_-_Adieux_Official_Visualiser.wav"}
+    - {index: 13, video_id: "fpA-tS96hGg", filename: "013_Einaudi_Berlin_Song.wav"}
+    - {index: 14, video_id: "O9wjmEhMKFw", filename: "014_Ludovico_Einaudi_-_Experience_Official_Solo_Piano_Performance_Video.wav"}
+    - {index: 15, video_id: "MgS-Lq_pUGk", filename: "015_Ludovico_Einaudi_-_Luminous_Official_Visualiser.wav"}
+    - {index: 16, video_id: "HQisZcNpdT4", filename: "016_Einaudi_Elegy_For_The_Arctic.wav"}
+    - {index: 17, video_id: "lzBv7F37stU", filename: "017_Einaudi_The_Snow_Prelude_No._2.wav"}
+  # NOTE entry 008: the reference file is "Nuvole Bianche (Official Visualiser)" but the live
+  # playlist now lists a different video ("The Mountain") at position 8. A fresh download
+  # therefore will not match the manifest hash for 008. It is excluded from training
+  # (a second recording of the pivot composition), so results are unaffected.
+
+# Files that cannot be fetched automatically and must be placed by hand.
+manual:
+  - path: data/nuvole_bianche.mp3
+    sha256: 080d0f3f122332db64a2e6e963ea62dfaa915682e4d0375457ae85d7a9b4f848
+    description: >-
+      Pivot recording (Nuvole Bianche) used by configs/data/nuvole_bianche_short_gaps.yaml.
+      Original upstream URL was not recorded; supply the exact file (checksum above) and
+      verify with `uv run audio-infill-download --verify`.
+
+# Pretrained weights fetched from the internet (used by encodec.EncodecModel.encodec_model_24khz).
+weights:
+  - name: encodec_24khz
+    url: https://dl.fbaipublicfiles.com/encodec/v0/encodec_24khz-d7cc33bc.th
+    filename: encodec_24khz-d7cc33bc.th
+    sha256: d7cc33bcf1aad7f2dad9836f36431530744abeace3ca033005e3290ed4fa47bf
+    # Destination: torch hub checkpoint dir (honours TORCH_HOME), where encodec looks first.

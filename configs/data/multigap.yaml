@@ -1,13 +1,17 @@
+# Input audio, output directory, and gap geometry (gap lengths in seconds, number of gaps and their minimum spacing).
 wav: data/raw/wav_test.wav
 outdir: data/processed/multigap
 gap_seconds: [1.0, 2.0, 5.0, 10.0]
 num_gaps: 4
 min_gap_separation_seconds: 1.0
+# Codec sample rate and EnCodec bandwidth (kbps).
 target_sr: 24000
 bandwidth: 6.0
+# Where gaps are placed (random within margin_seconds of the edges), RNG seed, and token-length cap/padding options.
 center_mode: random
 margin_seconds: 2.0
 seed: 42
 max_len_cap: 2048
 prefer_pow2: false
+# Extra context (seconds) kept around each gap in the exported crop.
 extra_ctx_s: 2.0

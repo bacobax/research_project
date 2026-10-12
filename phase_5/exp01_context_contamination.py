@@ -67,17 +67,21 @@ MARGIN = 16
 # ---------------------------------------------------------------------------
 
 class Encodings:
+    """Cache of EnCodec encodings of the ungapped source: the clean codes and codes of the source with given sample spans zeroed."""
     def __init__(self, encoder, base_audio: np.ndarray):
+        """Encode the clean base audio once and prepare the cache for zeroed variants."""
         self.encoder = encoder
         self.base = base_audio
         self.cache: Dict[Tuple, torch.Tensor] = {}
         self.clean = self._encode(base_audio)
 
     def _encode(self, audio: np.ndarray) -> torch.Tensor:
+        """Encode a mono float array to long codes [K, frames]."""
         codes, _ = self.encoder.encode(torch.from_numpy(audio.astype(np.float32)).unsqueeze(0))
         return codes.long()
 
     def zeroed(self, spans: Tuple[Tuple[int, int], ...]) -> torch.Tensor:
+        """Codes of the source with the given (start, end) sample spans zeroed (cached)."""
         key = tuple(spans)
         if key not in self.cache:
             a = self.base.copy()
@@ -159,6 +163,7 @@ def far_mismatch(clean: torch.Tensor, zeroed: torch.Tensor, spans_frames: List[T
 # ---------------------------------------------------------------------------
 
 def run_one(run: str, device: str, enc_holder: Dict, ann: Dict) -> Tuple[List[Dict], List[Dict], List[Dict], Dict]:
+    """Evaluate conditions A-E/Z for one run on the real gaps and held-out validation gaps. Returns (example records, effects, coverage rows, metadata)."""
     trainer = c.build_trainer(run, "best_val", device=device)
     trainer.model.eval()
     hop = trainer.cfg.target_sr // trainer.encoder.frame_rate
@@ -249,6 +254,7 @@ def run_one(run: str, device: str, enc_holder: Dict, ann: Dict) -> Tuple[List[Di
 # ---------------------------------------------------------------------------
 
 def mean_ci(x: np.ndarray) -> Tuple[float, float]:
+    """Mean and 95% normal-approximation CI half-width, ignoring non-finite values."""
     x = np.asarray(x, dtype=float)
     x = x[np.isfinite(x)]
     if len(x) < 2:
@@ -335,6 +341,7 @@ def fig_profile(prof_agg: List[Dict]) -> None:
 
 
 def fig_coverage(coverage: List[Dict], sr: int, hop: int) -> None:
+    """Figure of the gap, its rounded frame mask and the frames actually touched by the zeroing, per real gap."""
     ps.apply_style()
     cov = [r for r in coverage if r["run"] == coverage[0]["run"]]
     fig, axes = plt_subplots(len(cov), 1, (11, 1.15 * len(cov) + 0.8), sharex=False)
@@ -368,6 +375,7 @@ def fig_coverage(coverage: List[Dict], sr: int, hop: int) -> None:
 
 
 def fig_effects(effects: List[Dict], st: str, name: str, title: str) -> None:
+    """Figure of each contamination condition's effect (vs clean) on NLL, SI-SDR and log-mel L1."""
     ps.apply_style()
     metrics = [("nll", "token NLL on the gap (nats)\nlower is better"),
                ("si_sdr_crop", "SI-SDR, gap +/- 16 frames (dB)\nhigher is better"),
@@ -404,6 +412,7 @@ def fig_effects(effects: List[Dict], st: str, name: str, title: str) -> None:
 
 
 def fig_real_gaps(records: List[Dict], coverage: List[Dict]) -> None:
+    """Figure of SI-SDR per real gap for the main conditions (A clean, C deployed, D coverage, Z unfilled)."""
     ps.apply_style()
     conds = ["A_clean", "C_deployed", "D_coverage", "Z_unfilled"]
     colors = {"A_clean": ps.CAT[0], "C_deployed": ps.CAT[1], "D_coverage": ps.CAT[2], "Z_unfilled": ps.INK_2}
@@ -432,17 +441,20 @@ def fig_real_gaps(records: List[Dict], coverage: List[Dict]) -> None:
 
 
 def plt_subplots(nr, nc, size, **kw):
+    """plt.subplots wrapper that accepts width_ratios and a (w, h) size tuple."""
     import matplotlib.pyplot as plt
     gridspec_kw = {"width_ratios": kw.pop("width_ratios")} if "width_ratios" in kw else None
     return plt.subplots(nr, nc, figsize=size, gridspec_kw=gridspec_kw, **kw)
 
 
 def plt_rect(xy, w, h, **kw):
+    """Matplotlib Rectangle helper (lazy import)."""
     from matplotlib.patches import Rectangle
     return Rectangle(xy, w, h, **kw)
 
 
 def write_csv(path: Path, rows: List[Dict]) -> None:
+    """Write dict rows to CSV using the union of keys in first-seen order."""
     keys = list(dict.fromkeys(k for r in rows for k in r))
     with path.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=keys)
@@ -451,6 +463,7 @@ def write_csv(path: Path, rows: List[Dict]) -> None:
 
 
 def main() -> None:
+    """CLI: run (or, with --figures-only, redraw from saved CSVs) the experiment for each run, write CSV/JSON results and figures."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--runs", nargs="+", default=list(DEFAULT_RUNS))
     ap.add_argument("--device", default="cuda:1")
@@ -483,7 +496,9 @@ def main() -> None:
 
 
 def _read(path: Path) -> List[Dict]:
+    """Read a results CSV, converting numeric-looking cells to float."""
     def conv(v):
+        """Convert a cell to float when possible, else keep the string."""
         try:
             return float(v)
         except ValueError:

@@ -104,6 +104,7 @@ def _save_figure(fig, base_path: Path) -> None:
 
 
 def _style_axes(ax) -> None:
+    """Light grid and no top/right spines for all figures."""
     ax.grid(True, alpha=0.25, linewidth=0.7)
     ax.spines[["top", "right"]].set_visible(False)
 
@@ -131,6 +132,7 @@ def append_summary_rows(rows: List[Dict[str, Any]]) -> None:
 
 
 def _check_disk_space(min_free_gib: float = 1.0) -> None:
+    """Abort early if the root filesystem is nearly full (the script itself writes only a few MB)."""
     free_gib = shutil.disk_usage("/").free / (1024 ** 3)
     if free_gib < min_free_gib:
         raise RuntimeError(
@@ -142,6 +144,7 @@ def _check_disk_space(min_free_gib: float = 1.0) -> None:
 
 
 def write_tidy_csv(path: Path, rows: List[Dict[str, Any]], columns: Sequence[str]) -> None:
+    """Write rows as a tidy CSV with the given column order."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=list(columns))
@@ -158,6 +161,7 @@ def write_tidy_csv(path: Path, rows: List[Dict[str, Any]], columns: Sequence[str
 
 @dataclass
 class PredictionCell:
+    """Per-(example, codebook, gap position) prediction record: target, top-1, top-5 hit, NLL, entropy and divergence from the training token marginal."""
     band: str
     mask_len: int
     example_id: int
@@ -195,6 +199,7 @@ def compute_token_marginals(
         excluded[g0:g1] = True
 
     def _marginal_from_frames(codes_k: np.ndarray) -> Tuple[np.ndarray, int]:
+        """Empirical token distribution and support size for one codebook's tokens."""
         counts = np.bincount(codes_k, minlength=BINS).astype(np.float64)
         support = int((counts > 0).sum())
         total = counts.sum()
@@ -266,6 +271,7 @@ def _forward_gap_logits(trainer, example) -> torch.Tensor:
 def collect_gap_predictions(
     trainer, grouped_examples: Dict[str, List[Any]], marginals: Dict[str, Dict[str, Any]]
 ) -> List[PredictionCell]:
+    """Run the model on every validation example and record a PredictionCell for each gap token, using the training marginal for comparison."""
     train_probs = marginals["train"]["probs"]  # [K, BINS]
     train_log_probs = np.log(np.clip(train_probs, MARGINAL_FLOOR, None))
     cells: List[PredictionCell] = []
@@ -330,6 +336,7 @@ def run_h1(
     run_name: str, checkpoint_tag: str, step: int, cells: List[PredictionCell], marginals: Dict[str, Dict[str, Any]],
     eps_bug_clean: bool,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """H1 (mode averaging): compare the model's gap predictions with the context-free training-token marginal. Returns (records, summary rows)."""
     train_probs = marginals["train"]["probs"]
     train_support = marginals["train"]["support_size"]
     holdout_target_probs = marginals["holdout_targets"]["probs"]
@@ -406,6 +413,7 @@ def run_h1(
 
 
 def plot_h1(records: List[Dict[str, Any]], figures_dir: Path, run_name: str, step: int) -> None:
+    """Figure for H1: model vs marginal statistics per band."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -480,6 +488,7 @@ def plot_h1(records: List[Dict[str, Any]], figures_dir: Path, run_name: str, ste
 
 
 def _wilson_interval(k: int, n: int, z: float = 1.96) -> Tuple[float, float]:
+    """95% Wilson score interval for k successes in n trials."""
     if n == 0:
         return (0.0, 0.0)
     p = k / n
@@ -492,6 +501,7 @@ def _wilson_interval(k: int, n: int, z: float = 1.96) -> Tuple[float, float]:
 def run_h2(
     run_name: str, checkpoint_tag: str, step: int, cells: List[PredictionCell], eps_bug_clean: bool,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """H2 (RVQ hierarchy): NLL/accuracy broken down by codebook and gap position, merged over mask lengths. Returns (per-mask-length rows, merged rows)."""
     by_cell: Dict[Tuple[str, int, int, int], List[PredictionCell]] = defaultdict(list)
     for x in cells:
         by_cell[(x.band, x.mask_len, x.codebook, x.gap_pos)].append(x)
@@ -618,6 +628,7 @@ def h2_consistency_check(
 
 
 def _compare(tag: str, h2_value: float, reference_scalars: Optional[Dict[str, float]], historical_scalars: Dict[str, float]) -> Dict[str, Any]:
+    """Compare an H2-recomputed loss with the reference and historically logged scalar for `tag`."""
     ref_val = reference_scalars.get(tag) if reference_scalars else None
     hist_val = historical_scalars.get(tag)
     return {
@@ -631,6 +642,7 @@ def _compare(tag: str, h2_value: float, reference_scalars: Optional[Dict[str, fl
 
 
 def plot_h2(per_mask_len: List[Dict[str, Any]], merged: List[Dict[str, Any]], figures_dir: Path, run_name: str, step: int) -> None:
+    """Figure for H2: error structure across codebooks and gap positions."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -735,7 +747,9 @@ def cross_attention_capture(model: EncoderDecoderCodebookInfiller, layers: Seque
     handles = []
 
     def make_pre_hook():
+        """Build a forward pre-hook that forces the attention module to return (unaveraged, per-head) weights."""
         def pre_hook(module, args, kwargs):
+            """Request per-head attention weights from the module."""
             kwargs["need_weights"] = True
             kwargs["average_attn_weights"] = False
             return args, kwargs
@@ -743,7 +757,9 @@ def cross_attention_capture(model: EncoderDecoderCodebookInfiller, layers: Seque
         return pre_hook
 
     def make_hook(layer_idx):
+        """Build a forward hook capturing the cross-attention weights of layer `layer_idx`."""
         def hook(module, inputs, output):
+            """Store the module's attention weights (fails loudly if the pre-hook did not take effect)."""
             attn = output[1]
             assert attn is not None, (
                 "cross-attention weights are None -- the need_weights pre-hook did not take "
@@ -775,6 +791,7 @@ def run_h3(
     trainer, run_name: str, checkpoint_tag: str, step: int, grouped_examples: Dict[str, List[Any]],
     eps_bug_clean: bool, examples_per_band: int = 2, mask_len: int = 4, layers: Sequence[int] = (0, 1, 2, 3),
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
+    """H3 (context usage): record the decoder cross-attention weights per layer and summarise attention by distance from the gap. Returns (rows, summary, aux data for plotting)."""
     assert not trainer.model.training
     T = trainer.cfg.seq_len
     maps: Dict[Tuple[str, int], Dict[int, np.ndarray]] = {}
@@ -851,6 +868,7 @@ def run_h3(
 
 
 def plot_h3(aux: Dict[str, Any], figures_dir: Path, run_name: str, step: int) -> None:
+    """Figure for H3: cross-attention maps and attention mass versus distance from the gap."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -1021,6 +1039,7 @@ def plot_h3(aux: Dict[str, Any], figures_dir: Path, run_name: str, step: int) ->
 
 
 def _read_metrics_csv(path: Path, run_alias: str, tag: str) -> List[Tuple[int, float]]:
+    """Read (step, value) points for one run alias and tag from an exported metrics CSV."""
     points: List[Tuple[int, float]] = []
     with open(path, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
@@ -1033,6 +1052,7 @@ def _read_metrics_csv(path: Path, run_alias: str, tag: str) -> List[Tuple[int, f
 def run_h4(
     run_name: str, checkpoint_step: Optional[int], eps_bug_clean: bool, tail_points: int = 20,
 ) -> Tuple[Dict[str, Any], List[Tuple[int, float]], List[Tuple[int, float]]]:
+    """H4 (convergence): minimum, last value and tail slope of held-out loss from the logged metrics, versus the checkpoint step."""
     if run_name not in METRICS_SOURCES:
         return {"run": run_name, "error": "no metrics.csv source registered for this run"}, [], []
     path, alias = METRICS_SOURCES[run_name]
@@ -1086,6 +1106,7 @@ def run_h4(
 
 
 def plot_h4(records: List[Dict[str, Any]], curves: Dict[str, Tuple[List, List]], figures_dir: Path) -> None:
+    """Figure for H4: held-out loss curves with the evaluated checkpoint marked."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -1149,6 +1170,7 @@ def plot_h4(records: List[Dict[str, Any]], curves: Dict[str, Tuple[List, List]],
 
 
 def parse_args(argv=None) -> argparse.Namespace:
+    """CLI: runs, checkpoint tag, which diagnostics (h1-h4) and H3 sampling options."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--runs", nargs="+", default=list(DEFAULT_RUNS), choices=list(RUN_NAMES))
     parser.add_argument("--checkpoint", default="best_val", choices=("best_val", "best", "final"))
@@ -1164,6 +1186,7 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 
 def main(argv=None) -> None:
+    """Run the selected diagnostics on each requested run, writing CSV/JSON results and figures under phase_4/results."""
     args = parse_args(argv)
     _check_disk_space()
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)

@@ -63,15 +63,18 @@ CHECKPOINT_PLAN = {
 
 
 def _flat_grad(loss: torch.Tensor, params: List[torch.nn.Parameter]) -> torch.Tensor:
+    """Gradient of `loss` w.r.t. params as one flat float vector (zeros for unused params), keeping the graph for further terms."""
     grads = torch.autograd.grad(loss, params, retain_graph=True, allow_unused=True)
     return torch.cat([(g if g is not None else torch.zeros_like(p)).reshape(-1).float() for g, p in zip(grads, params)])
 
 
 def _pct(a: np.ndarray, q: float) -> float:
+    """Percentile of an array (NaN if empty)."""
     return float(np.percentile(a, q)) if a.size else float("nan")
 
 
 def measure_checkpoint(trainer, run_name: str, ckpt_file: str, ckpt_path: Path, n_batches: int) -> Dict:
+    """Backprop the token, decoded-L1 and decoded-STFT terms separately over n_batches training batches of one checkpoint and summarise their pre-clip gradient norms."""
     trainer.load_checkpoint(str(ckpt_path))
     cfg = trainer.cfg
     assert trainer.decoded_loss_enabled, "decoded loss is disabled for this run; nothing to attribute"
@@ -152,6 +155,7 @@ SUMMARY_COLUMNS = ["run", "checkpoint", "step", "n_batches", "weight_decay", "pa
 
 
 def summary_row(sm: Dict) -> Dict:
+    """Flatten one checkpoint's summary into a rounded CSV row."""
     return {"run": sm["run"], "checkpoint": sm["checkpoint"], "step": sm["step"], "n_batches": sm["n_batches"],
             "weight_decay": sm["weight_decay"], "param_l2": round(sm["param_l2"], 4),
             "token_median": round(sm["token"]["median"], 4), "token_p90": round(sm["token"]["p90"], 4),
@@ -163,6 +167,7 @@ def summary_row(sm: Dict) -> Dict:
 
 
 def make_figure(summaries: List[Dict]) -> None:
+    """Plot gradient-norm trends per loss term across checkpoints."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -193,6 +198,7 @@ def make_figure(summaries: List[Dict]) -> None:
 
 
 def main():
+    """CLI: measure the planned checkpoints of each run and write results under phase_4/results/exp02."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--runs", nargs="+", default=list(CHECKPOINT_PLAN), choices=list(CHECKPOINT_PLAN))
     ap.add_argument("--batches", type=int, default=100)

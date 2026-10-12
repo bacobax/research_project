@@ -49,6 +49,7 @@ RUN_TABLE = [
 
 
 def export_one(run_name: str, phase_folder: str, latest_tag: str, device: str | None = None) -> None:
+    """Inpaint the real gaps with a run's latest and best_val checkpoints and copy the per-gap wav crops into <phase>/results/audio_samples/<run>/{latest,best_val}/."""
     for tag_label, checkpoint_tag in (("latest", latest_tag), ("best_val", "best_val")):
         trainer = c.build_trainer(run_name, checkpoint_tag, device=device)
         scratch_samples_dir = trainer.cfg.samples_dir
@@ -65,13 +66,16 @@ def export_one(run_name: str, phase_folder: str, latest_tag: str, device: str | 
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """CLI: --runs subset and optional --device override."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--runs", nargs="+", default=[r[0] for r in RUN_TABLE], choices=[r[0] for r in RUN_TABLE])
+    parser.add_argument("--runs", nargs="+", default=[r[0] for r in RUN_TABLE], choices=[r[0] for r in RUN_TABLE],
+                        help="Runs to export (default: all runs in RUN_TABLE)")
     parser.add_argument("--device", default=None, help="Override the run config's device (e.g. cuda:1); default: the config's own.")
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
+    """Export gap audio samples for each requested run."""
     args = parse_args(argv)
     table = {name: (phase_folder, latest_tag) for name, phase_folder, latest_tag in RUN_TABLE}
     for run_name in args.runs:

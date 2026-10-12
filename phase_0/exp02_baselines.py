@@ -23,6 +23,7 @@ import common as c  # noqa: E402
 
 
 def run_one(run_name: str, checkpoint_tag: str) -> list:
+    """Score the model and each token baseline on the real validation examples of one (run, checkpoint). Returns (records, summary rows)."""
     trainer = c.build_trainer(run_name, checkpoint_tag)
     step = trainer.global_step
     rng = np.random.default_rng(1234)
@@ -75,6 +76,7 @@ def run_one(run_name: str, checkpoint_tag: str) -> list:
 
 
 def main():
+    """Run the baseline comparison for every configured run/checkpoint and save the results."""
     all_records = []
     all_rows = []
     for run_name, run in c.RUNS.items():

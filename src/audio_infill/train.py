@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+"""Training, validation and inference for the codebook-token audio infiller.
+
+Audio is encoded to EnCodec RVQ tokens [K, T]; a transformer (joint or encoder-decoder) predicts the
+tokens of masked spans (gaps), trained with cross-entropy plus an optional decoded-audio (STFT) loss.
+Contents: activity/mask-sampling helpers, fixed validation-set builders and plotting, the AudioEncoder
+codec wrapper, the model classes, the multi-resolution STFT loss and the Trainer, then the CLI (main).
+Settings come from audio_infill.config / YAML (see configs/train/).
+"""
+
 import os
 import sys
 import time
@@ -41,6 +50,9 @@ GRAD_NORM_SPIKE_THRESHOLD = 100.0
 
 @dataclass
 class TrainConfig:
+    """Training/inference settings (YAML keys / CLI flags). Mirrors audio_infill.config.TrainConfig, which
+    is what the CLI and tests use; keep both in sync when adding fields.
+    """
     config: Optional[str] = None
     ds_dir: str = "data/processed/single_gap"
     sample: Optional[str] = None
@@ -173,18 +185,22 @@ class TrainConfig:
 
     @property
     def checkpoint_dir(self) -> Path:
+        """Directory for checkpoints of this run."""
         return Path(self.output_dir) / self.run_name / "checkpoints"
 
     @property
     def tb_dir(self) -> Path:
+        """Directory for TensorBoard event files of this run."""
         return Path(self.output_dir) / self.run_name / "tb"
 
     @property
     def samples_dir(self) -> Path:
+        """Directory for audio/figure samples of this run."""
         return Path(self.output_dir) / self.run_name / "samples"
 
 
 def set_seed(seed: int):
+    """Seed python, numpy and torch (CPU and all CUDA devices) for reproducibility."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -193,6 +209,7 @@ def set_seed(seed: int):
 
 
 def resolve_device(cfg_device: str) -> torch.device:
+    """Map 'auto' to cuda, else mps, else cpu; any other string is passed to torch.device."""
     if cfg_device == "auto":
         if torch.cuda.is_available():
             return torch.device("cuda")
@@ -203,6 +220,7 @@ def resolve_device(cfg_device: str) -> torch.device:
 
 
 def normalize_robust(values: np.ndarray, low_q: float = 0.05, high_q: float = 0.95) -> np.ndarray:
+    """Rescale to ~[0, 1] using the low/high quantiles (robust to outliers); falls back to min/max when the quantiles collapse."""
     arr = np.asarray(values, dtype=np.float32)
     if arr.size == 0:
         return arr
@@ -219,6 +237,7 @@ def normalize_robust(values: np.ndarray, low_q: float = 0.05, high_q: float = 0.
 
 
 def smooth_1d(values: np.ndarray, kernel_size: int) -> np.ndarray:
+    """Moving-average smoothing with an odd kernel (even sizes are bumped by one) and edge padding."""
     arr = np.asarray(values, dtype=np.float32)
     k = int(max(1, kernel_size))
     if k <= 1 or arr.size <= 1:
@@ -232,6 +251,7 @@ def smooth_1d(values: np.ndarray, kernel_size: int) -> np.ndarray:
 
 
 def compute_rms_per_frame(wav: torch.Tensor, frames: int) -> np.ndarray:
+    """RMS of the waveform within each codec frame (samples are split evenly across `frames`)."""
     samples = wav.squeeze(0).detach().cpu().numpy().astype(np.float32)
     if frames <= 1 or samples.size <= 1:
         return np.zeros(max(1, frames), dtype=np.float32)
@@ -251,6 +271,7 @@ def compute_rms_per_frame(wav: torch.Tensor, frames: int) -> np.ndarray:
 
 
 def compute_token_change_per_frame(codes: torch.Tensor) -> np.ndarray:
+    """Fraction of codebooks whose token differs from the previous frame, per frame (frame 0 copies frame 1)."""
     c = codes.detach().cpu().numpy()
     if c.shape[1] == 0:
         return np.zeros(0, dtype=np.float32)
@@ -263,6 +284,7 @@ def compute_token_change_per_frame(codes: torch.Tensor) -> np.ndarray:
 
 
 def _build_cumsum(values: np.ndarray) -> np.ndarray:
+    """Zero-prefixed float64 cumulative sum so span sums are csum[end] - csum[start]."""
     arr = np.asarray(values, dtype=np.float32)
     csum = np.zeros(arr.size + 1, dtype=np.float64)
     csum[1:] = np.cumsum(arr, dtype=np.float64)
@@ -270,11 +292,13 @@ def _build_cumsum(values: np.ndarray) -> np.ndarray:
 
 
 def span_mean_from_cumsum(csum: np.ndarray, start: np.ndarray, end: np.ndarray) -> np.ndarray:
+    """Mean of the underlying values over [start, end) spans, vectorised via a prefix sum."""
     length = np.maximum(1, end - start)
     return ((csum[end] - csum[start]) / length).astype(np.float32)
 
 
 def choose_mask_regime(probs: Dict[str, float]) -> str:
+    """Sample a masking regime (active/transition/low_activity/uniform) from the given probabilities (normalised; defaults used if all zero)."""
     names = ["active", "transition", "low_activity", "uniform"]
     p = np.array([max(0.0, float(probs.get(n, 0.0))) for n in names], dtype=np.float64)
     if p.sum() <= 0:
@@ -294,6 +318,7 @@ def compute_mask_candidate_weights(
     dead_window_min_mean: float,
     dead_window_min_ratio: float,
 ) -> np.ndarray:
+    """Per-candidate sampling weights for placing a mask under `regime`, from span activity statistics; near-dead spans are heavily down-weighted."""
     if regime == "active":
         w = 0.10 + 0.60 * mean_activity + 0.30 * active_ratio
     elif regime == "transition":
@@ -319,6 +344,7 @@ def compute_mask_candidate_weights(
 
 
 def window_overlaps_ranges(start: int, seq_len: int, ranges: List[Tuple[int, int]]) -> bool:
+    """True if [start, start+seq_len) overlaps any (begin, end) range."""
     window_end = start + seq_len
     for g0, g1 in ranges:
         if start < g1 and window_end > g0:
@@ -332,6 +358,7 @@ def is_non_gap_window(
     gaps: List[Tuple[int, int]],
     blocked_ranges: Optional[List[Tuple[int, int]]] = None,
 ) -> bool:
+    """True if the window overlaps neither the real gaps nor any blocked (e.g. validation holdout) ranges."""
     if window_overlaps_ranges(start, seq_len, gaps):
         return False
     if blocked_ranges and window_overlaps_ranges(start, seq_len, blocked_ranges):
@@ -340,6 +367,7 @@ def is_non_gap_window(
 
 
 def merge_ranges(ranges: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+    """Merge overlapping or touching (start, end) ranges into a sorted disjoint list."""
     if not ranges:
         return []
     merged: List[Tuple[int, int]] = []
@@ -352,6 +380,7 @@ def merge_ranges(ranges: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
 
 
 def validation_holdout_summary(ranges: List[Tuple[int, int]]) -> Dict[str, float]:
+    """Count and total frames of the merged holdout ranges, for logging."""
     merged = merge_ranges(ranges)
     return {
         "holdout_ranges": float(len(merged)),
@@ -360,6 +389,7 @@ def validation_holdout_summary(ranges: List[Tuple[int, int]]) -> Dict[str, float
 
 
 def candidate_mask_offsets(seq_len: int, mask_len: int, mask_stride: int) -> np.ndarray:
+    """Candidate mask start offsets within a window at the given stride, always including the last valid offset."""
     max_m0 = seq_len - mask_len
     if max_m0 <= 0:
         return np.array([0], dtype=np.int64)
@@ -377,6 +407,7 @@ def compute_activity_features(
     activity_low_quantile: float,
     activity_high_quantile: float,
 ) -> Dict[str, Any]:
+    """Per-frame activity = smoothed 0.65*normalised RMS + 0.35*normalised token change, plus low/high quantile thresholds."""
     frames = int(codes.shape[1])
     rms = compute_rms_per_frame(wav, frames)
     token_change = compute_token_change_per_frame(codes)
@@ -396,6 +427,7 @@ def compute_activity_features(
 
 @dataclass
 class FixedValidationExample:
+    """One fixed validation item: masked input x, target y, loss mask and its provenance (band, window/mask position)."""
     x: torch.Tensor
     y: torch.Tensor
     loss_mask: torch.Tensor
@@ -409,6 +441,7 @@ class FixedValidationExample:
 
 @dataclass
 class ValidationRegion:
+    """A held-out contiguous frame region [start, end) with its activity statistics, used by the holdout_regions strategy."""
     band: str
     start: int
     end: int
@@ -418,12 +451,15 @@ class ValidationRegion:
 
 @dataclass
 class ValidationGroupSpec:
+    """Identifies a validation group: activity band, optionally restricted to one mask length."""
     band: str
     mask_len: Optional[int] = None
 
 
 class FixedMaskedSpanDataset(Dataset):
+    """Dataset over a precomputed list of FixedValidationExample (identical examples at every validation)."""
     def __init__(self, examples: List[FixedValidationExample]):
+        """Store the examples and precompute their mean activity / mask length summary."""
         self.examples = list(examples)
         mask_means = np.array([ex.mask_mean_activity for ex in self.examples], dtype=np.float32)
         mask_lengths = np.array([ex.mask_len for ex in self.examples], dtype=np.float32)
@@ -434,20 +470,24 @@ class FixedMaskedSpanDataset(Dataset):
         }
 
     def __len__(self) -> int:
+        """Number of items."""
         return len(self.examples)
 
     def __getitem__(self, idx: int):
+        """Return the idx-th item."""
         ex = self.examples[idx]
         return ex.x.clone(), ex.y.clone(), ex.loss_mask.clone()
 
 
 def slugify_component(text: str) -> str:
+    """Make a string filesystem-safe (alnum, '-' and '_' only)."""
     safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(text))
     safe = safe.strip("_")
     return safe or "item"
 
 
 def make_validation_example_id(example: FixedValidationExample, group_name: str, index: int) -> str:
+    """Stable id for a validation example, encoding sample, group, index and window/mask position."""
     sample_slug = slugify_component(example.sample_name)
     group_slug = slugify_component(group_name)
     return (
@@ -457,6 +497,7 @@ def make_validation_example_id(example: FixedValidationExample, group_name: str,
 
 
 def derive_validation_crop_context_frames(mask_len: int, crop_context_frames: Optional[int] = None) -> int:
+    """Context frames to show around a mask in inspection crops: explicit value, else max(96, ceil(mask_len / 2))."""
     if crop_context_frames is not None:
         return max(0, int(crop_context_frames))
     return max(96, int(math.ceil(float(mask_len) * 0.5)))
@@ -468,6 +509,7 @@ def compute_validation_crop_bounds(
     mask_len: int,
     crop_context_frames: Optional[int] = None,
 ) -> Tuple[int, int]:
+    """Frame bounds [start, end) of the inspection crop: the mask plus context on both sides, clipped to the window."""
     context = derive_validation_crop_context_frames(mask_len, crop_context_frames)
     crop_start = max(0, int(mask_start) - context)
     crop_end = min(int(seq_len), int(mask_start) + int(mask_len) + context)
@@ -480,6 +522,7 @@ def frame_bounds_to_sample_bounds(
     start_frame: int,
     end_frame: int,
 ) -> Tuple[int, int]:
+    """Convert codec-frame bounds to audio sample bounds (uniform samples-per-frame), clipped to the signal."""
     if total_samples <= 0:
         return 0, 0
     samples_per_frame = float(total_samples) / max(1, int(total_frames))
@@ -512,6 +555,7 @@ def si_sdr_db(pred: np.ndarray, target: np.ndarray, eps: float = 1e-9) -> float:
 
 
 def extract_contiguous_mask_bounds(loss_mask: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Return per-row (first_masked_index, end_exclusive) of the single contiguous masked span in a [T] or [B, T] boolean mask."""
     if loss_mask.dim() == 1:
         loss_mask = loss_mask.unsqueeze(0)
     if loss_mask.dim() != 2:
@@ -536,6 +580,7 @@ def extract_contiguous_mask_bounds(loss_mask: torch.Tensor) -> Tuple[torch.Tenso
 
 
 def extract_contiguous_mask_bounds_from_segment_ids(segment_ids: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Same as extract_contiguous_mask_bounds, taking the gap as segment id 1 of a segment-id tensor."""
     if segment_ids.dim() == 1:
         segment_ids = segment_ids.unsqueeze(0)
     if segment_ids.dim() != 2:
@@ -547,6 +592,9 @@ def build_boundary_condition_tensors(
     loss_mask: torch.Tensor,
     max_distance: int,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Boundary-conditioning inputs from a loss mask: segment ids (0 left ctx, 1 gap, 2 right ctx) and clamped signed distances
+    to the gap start / end, offset by max_distance to be valid embedding indices.
+    """
     if max_distance <= 0:
         raise ValueError("max_distance must be > 0")
     if loss_mask.dim() == 1:
@@ -573,6 +621,7 @@ def build_boundary_condition_tensors_from_mask_token(
     mask_token: int,
     max_distance: int,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Boundary tensors for x [B, K, T], treating positions where all codebooks equal mask_token as the gap."""
     if x.dim() != 3:
         raise ValueError(f"x must have shape [B,K,T], got {tuple(x.shape)}")
     mask = (x == int(mask_token)).all(dim=1)
@@ -586,6 +635,7 @@ def compute_log_spectrogram_data(
     hop: int = 512,
     eps: float = 1e-7,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """STFT log-magnitude (dB) of a mono waveform. Returns (times, freqs, spec_db)."""
     waveform = torch.as_tensor(np.asarray(audio, dtype=np.float32)).flatten()
     if waveform.numel() == 0:
         raise ValueError("compute_log_spectrogram_data requires a non-empty waveform")
@@ -622,6 +672,7 @@ def _plot_log_spectrogram(
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
 ):
+    """Draw one log-frequency spectrogram on `ax` (shared vmin/vmax allow side-by-side comparison)."""
     freq_mask = freqs >= max(float(min_freq), float(freqs[0]) if freqs.size else float(min_freq))
     freqs_plot = freqs[freq_mask]
     spec_plot = spec_db[freq_mask, :]
@@ -666,6 +717,7 @@ def make_log_spectrogram_comparison_figure(
     hop: int = 512,
     min_freq: float = 30.0,
 ):
+    """Figure with target and prediction log-spectrograms on a common colour scale."""
     target_times, target_freqs, target_db = compute_log_spectrogram_data(target_audio, sr, n_fft=n_fft, hop=hop)
     pred_times, pred_freqs, pred_db = compute_log_spectrogram_data(pred_audio, sr, n_fft=n_fft, hop=hop)
     vmax = max(float(np.max(target_db)), float(np.max(pred_db)))
@@ -707,6 +759,7 @@ def _plot_waveform_panel(
     mask_sample_bounds: Tuple[int, int],
     time_offset_s: float = 0.0,
 ):
+    """Overlay target and predicted waveforms on `ax` with the masked sample range shaded."""
     target = np.asarray(target_audio, dtype=np.float32).reshape(-1)
     pred = np.asarray(pred_audio, dtype=np.float32).reshape(-1)
     n_samples = min(target.shape[0], pred.shape[0])
@@ -745,6 +798,7 @@ def make_waveform_comparison_figure(
     crop_sample_bounds: Optional[Tuple[int, int]] = None,
     time_offset_s: float = 0.0,
 ):
+    """Figure comparing target vs predicted waveforms for the full window and the inspection crop around the mask."""
     target = np.asarray(target_audio, dtype=np.float32).reshape(-1)
     pred = np.asarray(pred_audio, dtype=np.float32).reshape(-1)
     n_samples = min(target.shape[0], pred.shape[0])
@@ -782,6 +836,7 @@ def make_waveform_comparison_figure(
 
 
 def save_waveform(path: Path, audio: np.ndarray, sr: int):
+    """Write float32 audio to a wav file, creating parent directories."""
     import soundfile as sf
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -794,6 +849,7 @@ def _valid_non_gap_starts(
     gaps: List[Tuple[int, int]],
     blocked_ranges: Optional[List[Tuple[int, int]]] = None,
 ) -> List[int]:
+    """All window starts whose span avoids the gaps and blocked ranges."""
     max_start = max(0, frames - span_len)
     return [s for s in range(max_start) if is_non_gap_window(s, span_len, gaps, blocked_ranges)]
 
@@ -804,6 +860,7 @@ def _region_mean_activity(
     start: int,
     end: int,
 ) -> Tuple[float, float]:
+    """Mean activity and active-frame ratio over [start, end) from prefix sums."""
     start_a = np.array([start], dtype=np.int64)
     end_a = np.array([end], dtype=np.int64)
     mean_activity = float(span_mean_from_cumsum(activity_cumsum, start_a, end_a)[0])
@@ -818,6 +875,7 @@ def _pick_validation_regions(
     min_separation: int,
     already_selected: Optional[List[ValidationRegion]] = None,
 ) -> List[ValidationRegion]:
+    """Greedily choose `count` regions ordered by activity (descending or ascending) that stay min_separation frames from each other and from already-selected ones."""
     selected = list(already_selected or [])
     chosen: List[ValidationRegion] = []
     ordered = sorted(
@@ -856,6 +914,9 @@ def build_fixed_validation_examples(
     seed: int,
     sample_name: str,
 ) -> Tuple[Dict[str, List[FixedValidationExample]], List[Tuple[int, int]]]:
+    """Build the random-window validation pool: per activity band (high/low), fixed masked windows avoiding the real gaps.
+    Returns (examples per band, ranges used).
+    """
     _, frames = codes.shape
     valid_starts = _valid_non_gap_starts(frames, seq_len, gaps)
     if not valid_starts:
@@ -953,6 +1014,9 @@ def build_holdout_region_validation_examples(
     dead_window_min_mean: float,
     dead_window_min_ratio: float,
 ) -> Tuple[Dict[str, List[FixedValidationExample]], Dict[str, List[ValidationRegion]], List[Tuple[int, int]], Dict[str, float]]:
+    """Build the holdout-region validation pool: pick high/low-activity regions, exclude them from training, and draw fixed
+    masked examples per mask length inside them. Returns (examples per group, regions per band, holdout ranges, summary).
+    """
     _, frames = codes.shape
     if region_len_frames < seq_len:
         raise ValueError(f"validation region length {region_len_frames} must be >= seq_len {seq_len}")
@@ -1139,7 +1203,9 @@ def splice_gap_audio(
 
 
 class AudioEncoder:
+    """Frozen EnCodec 24 kHz wrapper: waveform -> RVQ codes [K, T] and codes -> waveform; mask_token == codebook size."""
     def __init__(self, bandwidth: float, device: torch.device):
+        """Load the frozen EnCodec 24 kHz model at `bandwidth` kbps; exposes bins, mask_token (= bins) and frame_rate."""
         from encodec import EncodecModel
 
         self.device = device
@@ -1152,6 +1218,7 @@ class AudioEncoder:
 
     @torch.no_grad()
     def encode(self, wav: torch.Tensor) -> Tuple[torch.Tensor, object]:
+        """Encode a mono waveform [1, T] to RVQ codes [K, frames] (on CPU) plus the codec's scale."""
         x = wav.unsqueeze(0).to(self.device)
         encoded = self.model.encode(x)
         codes_b, scale = encoded[0]
@@ -1160,11 +1227,13 @@ class AudioEncoder:
 
     @torch.no_grad()
     def decode(self, codes: torch.Tensor, scale) -> np.ndarray:
+        """Decode codes [K, frames] (with the scale from encode) back to a numpy waveform."""
         codes_b = codes.unsqueeze(0).to(self.device)
         wav_out = self.model.decode([(codes_b, scale)])
         return wav_out.squeeze(0).cpu().squeeze(0).numpy()
 
     def codes_to_embeddings(self, codes: torch.Tensor) -> torch.Tensor:
+        """Sum the quantizer-layer embeddings of hard codes [B, K, T] (or [K, T]) into decoder input embeddings [B, D, T]."""
         if codes.dim() == 2:
             codes = codes.unsqueeze(0)
         if codes.dim() != 3:
@@ -1181,6 +1250,7 @@ class AudioEncoder:
         return quantized_out
 
     def logits_to_embeddings(self, logits: torch.Tensor, temperature: float = 1.0) -> torch.Tensor:
+        """Differentiable counterpart of codes_to_embeddings: softmax(logits / temperature) mixes each codebook's vectors, so audio losses can backprop to logits."""
         if logits.dim() != 4:
             raise ValueError(f"logits_to_embeddings expects [B,K,T,V], got shape={tuple(logits.shape)}")
         if temperature <= 0:
@@ -1202,6 +1272,7 @@ class AudioEncoder:
         return quantized_out
 
     def decode_embeddings(self, embeddings: torch.Tensor, scale: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """Run the frozen EnCodec decoder on embeddings [B, D, T] (differentiable); optional per-item scale is applied to the output waveform."""
         if embeddings.dim() != 3:
             raise ValueError(f"decode_embeddings expects [B,D,T], got shape={tuple(embeddings.shape)}")
         embeddings = embeddings.to(self.device, dtype=torch.float32)
@@ -1244,6 +1315,7 @@ class ActivityAwareMaskedSpanDataset(Dataset):
         mask_stride: int = 1,
         activity_guided_masking: bool = True,
     ):
+        """Index the valid (non-gap, non-holdout, non-dead) window starts, their sampling weights, and the activity statistics used for mask placement."""
         self.codes = codes
         self.K, self.F = codes.shape
         self.gaps = sorted(gaps, key=lambda g: g[0])
@@ -1310,9 +1382,11 @@ class ActivityAwareMaskedSpanDataset(Dataset):
         self._build_valid_starts_and_weights()
 
     def _is_non_gap_window(self, s: int) -> bool:
+        """Whether a window starting at `s` avoids gaps and blocked (validation holdout) ranges."""
         return is_non_gap_window(s, self.seq_len, self.gaps, self.blocked_ranges)
 
     def _build_valid_starts_and_weights(self):
+        """Enumerate usable window starts and compute their sampling weights from window activity; dead windows are rejected or down-weighted. Logs the filtering counts."""
         self.starts: List[int] = []
         window_mean = []
         window_ratio = []
@@ -1382,6 +1456,7 @@ class ActivityAwareMaskedSpanDataset(Dataset):
 
     @property
     def mask_len_range(self) -> Tuple[int, int]:
+        """Current (min, max) mask length; updated by the curriculum."""
         return (self._mask_len_range[0], self._mask_len_range[1])
 
     def update_mask_range(self, mask_min: int, mask_max: int):
@@ -1390,18 +1465,22 @@ class ActivityAwareMaskedSpanDataset(Dataset):
         self._mask_len_range[1] = mask_max
 
     def __len__(self) -> int:
+        """Number of items."""
         return self.virtual_size
 
     def _sample_window_start(self) -> int:
+        """Draw a window start, weighted by activity when weighted_sampling is on, else uniformly."""
         if self.weighted_sampling and self.window_weights_t.numel() > 1:
             idx = int(torch.multinomial(self.window_weights_t, 1, replacement=True).item())
             return self.starts[idx]
         return random.choice(self.starts)
 
     def _span_mean(self, csum: np.ndarray, start: np.ndarray, end: np.ndarray) -> np.ndarray:
+        """Mean over [start, end) spans via a prefix sum."""
         return span_mean_from_cumsum(csum, start, end)
 
     def _proximity_to_active(self, start: np.ndarray, end: np.ndarray) -> np.ndarray:
+        """Per-span closeness (1 = at an active frame, 0 = half a window or more away) from the span centre to the nearest active frame."""
         if self.active_indices.size == 0:
             return np.zeros(start.shape[0], dtype=np.float32)
         centers = ((start + end) // 2).astype(np.int64)
@@ -1415,6 +1494,9 @@ class ActivityAwareMaskedSpanDataset(Dataset):
         return np.clip(1.0 - (min_dist / norm), 0.0, 1.0)
 
     def _choose_mask_span(self, s: int, mask_len: int) -> Tuple[int, int, Dict[str, float]]:
+        """Pick where the mask of `mask_len` goes inside the window: uniformly, or by activity regime-weighted candidate offsets.
+        Returns (mask_start, mask_end, stats) with the stats recorded for logging.
+        """
         max_m0 = self.seq_len - mask_len
         if max_m0 <= 0:
             return 0, mask_len, {
@@ -1479,6 +1561,7 @@ class ActivityAwareMaskedSpanDataset(Dataset):
         }
 
     def pop_recent_metrics(self, max_items: Optional[int] = None) -> List[Dict[str, float]]:
+        """Drain and return up to max_items recent sampling metrics (collected only when meta is enabled)."""
         if max_items is None:
             max_items = len(self.recent_metrics)
         items = []
@@ -1487,6 +1570,7 @@ class ActivityAwareMaskedSpanDataset(Dataset):
         return items
 
     def __getitem__(self, idx: int):
+        """Return the idx-th item."""
         s = self._sample_window_start()
         x = self.codes[:, s : s + self.seq_len].clone()
         y = x.clone()
@@ -1537,6 +1621,7 @@ class MultiSongMaskedSpanDataset(Dataset):
         song_weights: np.ndarray,
         virtual_size: int = 50_000,
     ):
+        """Combine per-song datasets; each sample first picks a song by song_weights, then delegates to that song's dataset."""
         if not datasets:
             raise ValueError("MultiSongMaskedSpanDataset requires at least one sub-dataset")
         if len(datasets) != len(song_weights):
@@ -1568,6 +1653,7 @@ class MultiSongMaskedSpanDataset(Dataset):
             self.summary[f"song_{i}_weight"] = float(weights[i])
 
     def __len__(self) -> int:
+        """Number of items."""
         return self.virtual_size
 
     def enable_meta(self) -> None:
@@ -1577,14 +1663,17 @@ class MultiSongMaskedSpanDataset(Dataset):
             ds.return_meta = True
 
     def _sample_song_index(self) -> int:
+        """Draw a song index according to song_weights."""
         return int(torch.multinomial(self.song_weights_t, 1, replacement=True).item())
 
     def __getitem__(self, idx: int):
+        """Return the idx-th item."""
         i = self._sample_song_index()
         return self.datasets[i][idx]
 
     @property
     def mask_len_range(self) -> Tuple[int, int]:
+        """Current (min, max) mask length (shared across the sub-datasets)."""
         return self.datasets[0].mask_len_range
 
     def update_mask_range(self, mask_min: int, mask_max: int):
@@ -1613,6 +1702,8 @@ class MultiSongMaskedSpanDataset(Dataset):
 
 
 class _CodebookInfillerBase(nn.Module):
+    """Shared pieces of both infillers: per-codebook token embeddings (vocab = bins + mask token), positional,
+    segment (left ctx / gap / right ctx) and clamped left/right gap-distance embeddings, and one linear head per codebook."""
     def __init__(
         self,
         K: int,
@@ -1625,6 +1716,7 @@ class _CodebookInfillerBase(nn.Module):
         dropout: float = 0.1,
         boundary_max_distance: int = 128,
     ):
+        """Create the embeddings, positional/segment/distance tables and per-codebook heads."""
         super().__init__()
         self.K = K
         self.bins = bins
@@ -1649,6 +1741,7 @@ class _CodebookInfillerBase(nn.Module):
         left_dist_idx: torch.Tensor,
         right_dist_idx: torch.Tensor,
     ) -> torch.Tensor:
+        """Sum token (per codebook), positional, segment and left/right distance embeddings, then apply dropout. Returns [B, T, d_model]."""
         h = self.pos(positions)
         for k in range(self.K):
             h = h + self.emb[k](x[:, k, :])
@@ -1658,10 +1751,13 @@ class _CodebookInfillerBase(nn.Module):
         return self.dropout(h)
 
     def _project_logits(self, h: torch.Tensor) -> torch.Tensor:
+        """Apply the per-codebook heads to hidden states [B, T, d] -> logits [B, K, T, bins]."""
         return torch.stack([self.head[k](h) for k in range(self.K)], dim=1)
 
 
 class JointCodebookInfiller(_CodebookInfillerBase):
+    """Bidirectional transformer encoder over the whole window (context and masked gap together); the K codebook
+    embeddings are summed per frame and each codebook has its own output head."""
     def __init__(
         self,
         K: int,
@@ -1674,6 +1770,7 @@ class JointCodebookInfiller(_CodebookInfillerBase):
         dropout: float = 0.1,
         boundary_max_distance: int = 128,
     ):
+        """Build the shared embeddings plus a pre-norm transformer encoder."""
         super().__init__(
             K=K,
             bins=bins,
@@ -1705,6 +1802,8 @@ class JointCodebookInfiller(_CodebookInfillerBase):
         right_dist_idx: Optional[torch.Tensor] = None,
         gap_targets: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """x: [B, K, T] tokens with the gap set to mask_token. Returns logits [B, K, T, bins]. Boundary tensors are
+        derived from the mask token when not given; gap_targets is unused by this model."""
         B, K, T = x.shape
         if segment_ids is None or left_dist_idx is None or right_dist_idx is None:
             segment_ids, left_dist_idx, right_dist_idx = build_boundary_condition_tensors_from_mask_token(
@@ -1722,6 +1821,10 @@ class JointCodebookInfiller(_CodebookInfillerBase):
 
 
 class EncoderDecoderCodebookInfiller(_CodebookInfillerBase):
+    """Encoder over the context frames (gap removed) and decoder over the gap frames, which cross-attend to the encoded
+    context. codebook_conditioning="depth_ar" adds a small causal transformer across the K codebooks of each gap frame
+    (codebook k sees codebooks < k); "none" predicts all codebooks independently from the decoder state.
+    """
     def __init__(
         self,
         K: int,
@@ -1736,6 +1839,7 @@ class EncoderDecoderCodebookInfiller(_CodebookInfillerBase):
         codebook_conditioning: str = "none",
         depth_layers: int = 2,
     ):
+        """Build the shared embeddings, the context encoder, the gap decoder and, for depth_ar, the codebook-depth transformer."""
         super().__init__(
             K=K,
             bins=bins,
@@ -1849,6 +1953,8 @@ class EncoderDecoderCodebookInfiller(_CodebookInfillerBase):
         gap_start, gap_end = extract_contiguous_mask_bounds_from_segment_ids(segment_ids)
         full_positions = torch.arange(T, device=x.device, dtype=torch.long).unsqueeze(0).expand(B, T)
 
+        # Split each row into context tokens (left + right of the gap, original positions kept) and gap tokens,
+        # right-padded to the batch maximum; padding masks keep attention off the pad slots.
         context_lengths = T - (gap_end - gap_start)
         gap_lengths = gap_end - gap_start
         max_ctx = int(context_lengths.max().item())
@@ -1933,6 +2039,7 @@ class EncoderDecoderCodebookInfiller(_CodebookInfillerBase):
         else:
             gap_logits = self._project_logits(decoded)
 
+        # Scatter gap logits back to their frame positions; context frames stay zero (never used in the loss).
         full_logits = gap_logits.new_zeros((B, K, T, self.bins))
         for b in range(B):
             gap_len = int(gap_lengths[b].item())
@@ -1941,6 +2048,7 @@ class EncoderDecoderCodebookInfiller(_CodebookInfillerBase):
 
 
 class MultiResolutionSTFTLoss(nn.Module):
+    """Multi-resolution STFT loss (spectral convergence + log-magnitude) between waveforms, used as the decoded-audio loss."""
     def __init__(
         self,
         n_ffts: Sequence[int],
@@ -1950,6 +2058,7 @@ class MultiResolutionSTFTLoss(nn.Module):
         log_magnitude_weight: float = 1.0,
         eps: float = 1e-7,
     ):
+        """Store the FFT / hop / window lists (equal length) and the term weights; eps floors magnitudes before log."""
         super().__init__()
         if not (len(n_ffts) == len(hop_lengths) == len(win_lengths)):
             raise ValueError("STFT parameter lists must have the same length")
@@ -1963,6 +2072,7 @@ class MultiResolutionSTFTLoss(nn.Module):
         self.eps = float(eps)
 
     def _stft_mag(self, audio: torch.Tensor, n_fft: int, hop_length: int, win_length: int) -> torch.Tensor:
+        """Hann-windowed STFT magnitude, floored at eps (bounds the log gradient)."""
         window = torch.hann_window(win_length, device=audio.device, dtype=audio.dtype)
         spec = torch.stft(
             audio,
@@ -1975,6 +2085,7 @@ class MultiResolutionSTFTLoss(nn.Module):
         return spec.abs().clamp_min(self.eps)
 
     def forward(self, pred: torch.Tensor, target: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Average over resolutions of spectral convergence and log-magnitude L1 between pred and target [B, T]. Returns the weighted total and its parts."""
         if pred.shape != target.shape:
             raise ValueError(f"pred/target shape mismatch: {tuple(pred.shape)} vs {tuple(target.shape)}")
         if pred.dim() != 2:
@@ -2040,7 +2151,9 @@ def resolve_extra_wav_paths(cfg: TrainConfig) -> List[Path]:
 
 
 class Trainer:
+    """Owns the codec, model, data sampling, validation pools and the train / validate / checkpoint / inpaint loops."""
     def __init__(self, cfg: TrainConfig):
+        """Set up the run: seed, output dirs, TensorBoard, audio/codes, validation pool, dataset, model, optimizer and decoded loss."""
         self.cfg = cfg
         self.device = resolve_device(cfg.device)
         set_seed(cfg.seed)
@@ -2073,6 +2186,7 @@ class Trainer:
             self._init_curriculum()
 
     def _log_hparams(self):
+        """Log the config values (and write them to TensorBoard) at startup."""
         cfg = self.cfg
         hparams = {
             k: v
@@ -2103,6 +2217,7 @@ class Trainer:
         gap_end_s: float,
         ann: Optional[dict],
     ) -> List[Tuple[int, int]]:
+        """Convert gap times (from the annotation, else gap_start_s/gap_end_s) to clamped codec-frame ranges."""
         fps = frames / max(duration_s, 1e-9)
         gaps_f: List[Tuple[int, int]] = []
         if ann is not None:
@@ -2131,6 +2246,7 @@ class Trainer:
         ann: Optional[dict] = None,
         has_gaps: bool = True,
     ) -> Dict[str, Any]:
+        """Load, mono-mix, resample and encode one wav; returns the waveform, codes, scale, gap frames and activity features."""
         import soundfile as sf
         import librosa
 
@@ -2181,6 +2297,7 @@ class Trainer:
         }
 
     def _load_audio(self):
+        """Load the pivot song and any extra_wavs (extra songs, no gaps) and derive shared sizes (K, bins, largest gap)."""
         cfg = self.cfg
         self.encoder = AudioEncoder(cfg.bandwidth, self.device)
         sample_data = self._load_audio_sample(
@@ -2275,6 +2392,7 @@ class Trainer:
             logger.warning("Could not write songs.json manifest: %s", e)
 
     def _build_dataset(self):
+        """Build the training dataset(s): per-song activity-aware masked-span datasets, combined by song_sampling when there are several."""
         cfg = self.cfg
         pivot_dataset = ActivityAwareMaskedSpanDataset(
             codes=self.codes,
@@ -2376,6 +2494,7 @@ class Trainer:
         self.writer.add_scalar("train/activity_high_thr", self.activity_high_thr, 0)
 
     def _build_validation(self):
+        """Build the fixed validation pool (random windows or holdout regions) and its dataloaders; also marks holdout ranges to exclude from training."""
         cfg = self.cfg
         self.validation_dataloaders: Dict[str, DataLoader] = {}
         self.validation_group_specs: Dict[str, ValidationGroupSpec] = {}
@@ -2513,6 +2632,7 @@ class Trainer:
             )
 
     def _build_model(self):
+        """Instantiate the joint or encoder-decoder infiller from the config and move it to the device."""
         cfg = self.cfg
         model_cls = EncoderDecoderCodebookInfiller if cfg.use_encoder_decoder else JointCodebookInfiller
         extra_kwargs: Dict[str, Any] = {}
@@ -2542,12 +2662,14 @@ class Trainer:
         self,
         loss_mask: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Boundary (segment/distance) tensors for a loss mask using cfg.boundary_max_distance."""
         return build_boundary_condition_tensors(
             loss_mask,
             max_distance=self.cfg.boundary_max_distance,
         )
 
     def _build_optimizer(self):
+        """AdamW (+ AMP GradScaler on CUDA) from the config."""
         cfg = self.cfg
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
@@ -2558,6 +2680,7 @@ class Trainer:
         self.scaler = torch.amp.GradScaler(enabled=(self.device.type == "cuda"))
 
     def _build_decoded_loss(self):
+        """Create the shared MultiResolutionSTFTLoss, needed by the decoded training loss and/or validation audio metrics."""
         cfg = self.cfg
         self.decoded_loss_enabled = bool(cfg.decoded_loss_enabled and cfg.decoded_loss_weight > 0)
         self.decoded_stft_loss: Optional[MultiResolutionSTFTLoss] = None
@@ -2599,6 +2722,7 @@ class Trainer:
     # --- Curriculum learning ---
 
     def _init_curriculum(self):
+        """Resolve curriculum start/end mask lengths and warmup steps from the config."""
         cfg = self.cfg
         self.curriculum_start = cfg.curriculum_start_mask if cfg.curriculum_start_mask is not None \
             else min(cfg.mask_len_max, 128)
@@ -2649,6 +2773,7 @@ class Trainer:
     # --- LR scheduling ---
 
     def _get_lr(self, step: int) -> float:
+        """Linear warmup to cfg.lr, then cosine decay to 0 at total_steps."""
         cfg = self.cfg
         if step < cfg.warmup_steps:
             return cfg.lr * step / max(1, cfg.warmup_steps)
@@ -2656,6 +2781,7 @@ class Trainer:
         return cfg.lr * 0.5 * (1.0 + math.cos(math.pi * progress))
 
     def _set_lr(self, lr: float):
+        """Set the learning rate on every optimizer param group."""
         for pg in self.optimizer.param_groups:
             pg["lr"] = lr
 
@@ -2746,6 +2872,7 @@ class Trainer:
         return {}
 
     def _compute_loss(self, logits: torch.Tensor, y: torch.Tensor, loss_mask: torch.Tensor) -> torch.Tensor:
+        """Token cross-entropy over masked frames only (all K codebooks of each masked frame)."""
         B, K, T, V = logits.shape
         logits_flat = logits.permute(0, 2, 1, 3).reshape(B * T * K, V)
         y_flat = y.permute(0, 2, 1).reshape(B * T * K)
@@ -2754,6 +2881,7 @@ class Trainer:
         return F.cross_entropy(logits_flat[mask_btk], y_flat[mask_btk])
 
     def _should_apply_decoded_loss(self, step: int) -> bool:
+        """Whether the decoded-audio loss is active at `step` (enabled, past decoded_loss_start_step, every decoded_loss_every steps)."""
         if not getattr(self, "decoded_loss_enabled", False):
             return False
         cfg = self.cfg
@@ -2768,6 +2896,9 @@ class Trainer:
         y: torch.Tensor,
         loss_mask: torch.Tensor,
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
+        """Decoded-audio loss on the gap: soft-decode predicted logits and the targets with EnCodec and compare
+        (waveform L1 + multi-resolution STFT). Returns (loss, metrics); zero when disabled.
+        """
         if not getattr(self, "decoded_loss_enabled", False) or self.decoded_stft_loss is None:
             zero = logits.new_zeros(())
             return zero, {
@@ -2876,6 +3007,7 @@ class Trainer:
         loss_mask: torch.Tensor,
         step: int,
     ) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, float]]:
+        """Token loss plus (when scheduled) the weighted decoded loss. Returns (total, token_loss, decoded metrics)."""
         token_loss = self._compute_loss(logits, y, loss_mask)
         decoded_loss = logits.new_zeros(())
         decoded_metrics = {
@@ -2897,6 +3029,7 @@ class Trainer:
         y: torch.Tensor,
         loss_mask: torch.Tensor,
     ) -> Dict[str, float]:
+        """Masked-frame metrics: NLL, top-1/top-5 accuracy and perplexity."""
         B, K, T, _ = logits.shape
         if loss_mask.dim() == 1:
             lm = loss_mask.unsqueeze(0).expand(B, -1)
@@ -2922,12 +3055,14 @@ class Trainer:
 
     @torch.no_grad()
     def _decode_validation_window_audio(self, codes: torch.Tensor) -> np.ndarray:
+        """Decode a window's codes straight to audio (no codec scale) for validation audio metrics."""
         embeddings = self.encoder.codes_to_embeddings(codes.unsqueeze(0))
         audio = self.encoder.decode_embeddings(embeddings, scale=None)
         return audio.squeeze(0).squeeze(0).detach().cpu().numpy().astype(np.float32, copy=False)
 
     @torch.no_grad()
     def _predict_validation_window(self, example: FixedValidationExample) -> torch.Tensor:
+        """Greedy fill: argmax tokens substituted into the masked frames of a validation example."""
         xb = example.x.unsqueeze(0).to(self.device, non_blocking=True)
         seg_ids, left_idx, right_idx = self._build_model_boundary_tensors(example.loss_mask.to(self.device))
         logits = self.model(xb, seg_ids, left_idx, right_idx)
@@ -2994,6 +3129,7 @@ class Trainer:
             sc_gap.append(self._spectral_convergence(pred_gap, target_gap))
 
         def _mean(values: List[float]) -> float:
+            """NaN-safe mean of a list (nan if empty)."""
             return float(np.mean(values)) if values else float("nan")
 
         return {
@@ -3015,6 +3151,7 @@ class Trainer:
         crop_frame_bounds: Tuple[int, int],
         crop_sample_bounds: Tuple[int, int],
     ) -> Dict[str, Any]:
+        """Write the target/predicted audio and comparison figures for one validation example under samples_dir."""
         step_dir = self.cfg.samples_dir / "validation" / f"step_{step}"
         example_dir = step_dir / group_name / example_id
         example_dir.mkdir(parents=True, exist_ok=True)
@@ -3084,6 +3221,7 @@ class Trainer:
 
     @torch.no_grad()
     def _log_validation_inspection(self, step: int) -> None:
+        """Save audio/figures for the fixed inspection examples at `step` and write a manifest (no-op unless validation_inspection_enabled)."""
         if not self.cfg.validation_inspection_enabled:
             return
         inspection_examples = getattr(self, "validation_inspection_examples", {})
@@ -3210,6 +3348,9 @@ class Trainer:
             self.writer.flush()
 
     def run_validation(self, step: int) -> Optional[Dict[str, float]]:
+        """Evaluate all validation groups: token metrics and, if enabled, decoded-audio metrics; logs to TensorBoard
+        and returns aggregated metrics (None if validation is off).
+        """
         if not getattr(self, "validation_enabled", False):
             return None
 
@@ -3451,6 +3592,7 @@ class Trainer:
         return False
 
     def save_checkpoint(self, tag: str = "latest"):
+        """Save model/optimizer/scaler/RNG state, step and config to <checkpoint_dir>/<tag>.pt."""
         path = self.cfg.checkpoint_dir / f"{tag}.pt"
         rng_state = {
             "python": random.getstate(),
@@ -3476,6 +3618,7 @@ class Trainer:
         logger.info("Saved checkpoint: %s (step %d)", path, self.global_step)
 
     def load_checkpoint(self, path: str):
+        """Restore a checkpoint (after checking architecture compatibility with the config) and its training/RNG state."""
         ckpt = torch.load(path, map_location=self.device, weights_only=False)
         ckpt_cfg = ckpt.get("config") or {}
         ckpt_use_encoder_decoder = bool(ckpt_cfg.get("use_encoder_decoder", False))
@@ -3539,6 +3682,9 @@ class Trainer:
         logger.info("Loaded checkpoint: %s (step %d)", path, self.global_step)
 
     def train(self):
+        """Main loop: sample batches, schedule LR (and curriculum), compute losses, clip/step, aggregate metrics, and periodically
+        validate, checkpoint and run test-gap fills. Honours early stopping and the NaN guard when enabled.
+        """
         cfg = self.cfg
         self.model.train()
         use_amp = self.device.type == "cuda"
@@ -3919,6 +4065,7 @@ class Trainer:
         return self.inpaint_all_gaps(output_path=output_path)
 
     def _make_spectrogram_figure(self, audio: np.ndarray, title: str, sr: int, n_fft: int = 2048, hop: int = 512):
+        """Log-spectrogram figure of one audio signal with an 80 dB dynamic range."""
         times, freqs, spec_db = compute_log_spectrogram_data(audio, sr, n_fft=n_fft, hop=hop)
         vmax = float(np.max(spec_db))
         vmin = vmax - 80.0
@@ -3940,6 +4087,7 @@ class Trainer:
         return fig
 
     def log_spectrograms(self, wav_filled: np.ndarray):
+        """Log spectrogram figures of the original gapped audio and the infilled output (to TensorBoard when tb_log_figures)."""
         sr = self.cfg.target_sr
         wav_orig = self.wav.squeeze(0).numpy()
 
@@ -3964,6 +4112,7 @@ class Trainer:
 
 
 def load_annotation(ds_dir: str, sample: str) -> dict:
+    """Load the JSON annotation written by make_gapped_dataset for <ds_dir>/<sample>.json."""
     json_path = Path(ds_dir) / f"{sample}.json"
     if not json_path.exists():
         raise FileNotFoundError(f"Annotation not found: {json_path}")
@@ -3972,6 +4121,7 @@ def load_annotation(ds_dir: str, sample: str) -> dict:
 
 
 def load_yaml_config(path: str) -> Dict[str, Any]:
+    """Load a YAML mapping (PyYAML if available, else a minimal flat parser)."""
     try:
         import yaml
     except Exception as e:
@@ -3989,6 +4139,7 @@ def load_yaml_config(path: str) -> Dict[str, Any]:
 
 
 def _set_cfg_field(cfg: TrainConfig, key: str, value: Any, source: str):
+    """Set one config field from a (possibly kebab-case) key; unknown keys are logged and ignored."""
     name = key.replace("-", "_")
     if not hasattr(cfg, name):
         logger.warning("Ignoring unknown config key from %s: %s", source, key)
@@ -3999,6 +4150,7 @@ def _set_cfg_field(cfg: TrainConfig, key: str, value: Any, source: str):
 
 
 def apply_mapping_to_cfg(cfg: TrainConfig, mapping: Dict[str, Any], source: str):
+    """Apply a mapping of YAML values onto the TrainConfig (lists become tuples where the field expects them)."""
     for key, value in mapping.items():
         _set_cfg_field(cfg, key, value, source)
 
@@ -4051,6 +4203,7 @@ def apply_auto_hparams(cfg: TrainConfig, ann: dict):
 
 
 def parse_args(argv: Optional[List[str]] = None):
+    """Parse CLI flags; precedence is defaults < YAML --config < explicit flags. Returns (cfg, args)."""
     parser = argparse.ArgumentParser(description="Audio Infiller Training")
     cfg = TrainConfig()
 
@@ -4345,6 +4498,7 @@ def parse_args(argv: Optional[List[str]] = None):
 
 
 def main():
+    """CLI entry point: build the Trainer, optionally resume, train (unless inpaint_only), then inpaint all gaps and log spectrograms."""
     cfg, args = parse_args()
     trainer = Trainer(cfg)
 

@@ -46,6 +46,7 @@ def read_train_acc_at_step(run_name: str, step: int) -> float:
 
 
 def run_one(run_name: str, checkpoint_tag: str) -> list:
+    """Evaluate one (run, checkpoint): real holdout validation vs the train-region control vs the logged train accuracy. Returns (record, summary rows)."""
     trainer = c.build_trainer(run_name, checkpoint_tag)
     step = trainer.global_step
     rows = []
@@ -108,6 +109,7 @@ def run_one(run_name: str, checkpoint_tag: str) -> list:
 
 
 def main():
+    """Run the control for every configured run/checkpoint, then save the JSON results and summary rows."""
     all_records = []
     all_rows = []
     for run_name, run in c.RUNS.items():
