@@ -13,7 +13,7 @@ evaluation of already-trained checkpoints — **no training happens in Phase 4**
 on the project's key material: the single song with carved real gaps (Nuvole Bianche), held-out
 regions of it, gap lengths 1–4 frames (13–53 ms), which is also the range the models trained on.
 
-Runs analysed (`best_val.pt` unless stated; H1–H3 on all eight, exp02 on ten):
+Runs analysed (`best_val.pt` unless stated; H1–H3 on all eight plus the STFT-off twin, exp02 on ten):
 
 | group | runs |
 |---|---|
@@ -21,6 +21,7 @@ Runs analysed (`best_val.pt` unless stated; H1–H3 on all eight, exp02 on ten):
 | regularized, 1 song | `phase2_regularization`, `phase3_regularization_seed43`, `phase3_regularization_seed44` |
 | 17-song seeds | `phase3_songs17_seed43`, `phase3_songs17_seed44` |
 | Phase 0 single-song (exp02 only) | `baseline`, `bigmodel` |
+| STFT ablation (Section 7) | `phase4_stft_off_seed43` (H1–H3, audio), compared with `phase3_regularization_seed43` |
 
 `phase1_songs04` and the three regularization runs are the Phase B reruns (decoded-loss
 `log_eps` 1e-7 → 1e-3, `grad_clip` 1.5 → 1.0). Their held-out loss is unchanged from the
@@ -189,15 +190,46 @@ the seed noise of ≈0.06 nats / ≈3 dB), which has **not** been run.
 medians over batches, not over training steps; fp16 gradients of the separate terms are computed
 without loss scaling.
 
-## 7. Not done
+## 7. Exp03 — STFT-loss training ablation
 
-- STFT-loss training ablation (Q2) — only gradient evidence exists.
+*Question.* Does the decoded-domain loss (STFT + waveform-L1 on audio decoded from the predicted tokens)
+help, hurt or do nothing? Exp02 shows it is a small share of the gradient but cannot show whether it matters.
+
+*Design.* Two runs with the same seed (43), data, model (d_model 128, dropout 0.3, weight decay 0.1),
+schedule (300k steps), `grad_clip` 1.0 and validation setup; they differ only in `decoded_loss_enabled`
+(`true` for `phase3_regularization_seed43`, `false` for `phase4_stft_off_seed43`). The OFF run's config
+was verified by loading both configs and diffing every field: only `config`, `output_dir`, `run_name`,
+`device` (cuda:1 launch override) and `decoded_loss_enabled` differ. The OFF run keeps
+`validation_audio_metrics_enabled`, so SI-SDR and spectral convergence are still logged.
+
+*Twin check.* The decoded loss starts at step 7000, so before then the runs must coincide; the averaged
+training loss agrees to <=5e-5 over steps 1000-7000 (same seed gives the same batches), and the token
+loss remains within ~1e-4 for the first 14k steps.
+
+*Comparison* (`exp03_stft_ablation.py`). Reads both TensorBoard logs, pairs the 12 validation points
+(25k..300k), and reports OFF minus ON for validation NLL, top-1 accuracy per activity band, gap-only
+and total SI-SDR, spectral convergence and training NLL. The noise reference is the standard deviation
+across seeds 42/43/44 of the regularization family (`phase_3/results/seed_check/family_summary.csv`).
+Rule fixed before the result was known: |difference| < 1 std -> "no detectable effect"; 1-2 std ->
+"inconclusive"; > 2 std -> "effect". `--self-check` runs the loader on the ON run alone and confirms it
+reproduces the exported seed-check values exactly.
+
+*Observed.* See `README.md` (Exp03) and `results/FINDINGS.md`: every metric is within 0.7 std at the final
+step and no validation point exceeds 2 std.
+
+*Limits.* One seed per arm; one weight (0.1); single-song regularized setting only; the noise band
+comes from three seeds, one of which (seed 42) used a longer 600k schedule, so it is approximate;
+validation uses 64 examples, which makes the audio metrics noisy.
+
+## 8. Not done
+
+- STFT ablation for other settings (17-song models, other seeds, other weights): only the regularized single-song seed-43 twin was run.
 - H1–H4 on `baseline` / `bigmodel` (exp02 only).
 - H5 (capacity sweep) and H6 (codebook-conditioned heads), both new training.
 - Testing why the gradient norm grows (per-layer weight/gradient norms; weight-decay variants).
 - n = 8 examples per cell is small; an extended example set was not built.
 
-## 8. Reproduction
+## 9. Reproduction
 
 ```bash
 # H1-H3 (+H4 from CSV): all eight runs in one call (the script overwrites results/ each call)
@@ -206,6 +238,8 @@ uv run python phase_4/exp01_underfitting_diagnostics.py --device cuda:1 --runs \
   phase3_regularization_seed43 phase3_regularization_seed44 phase3_songs17_seed43 phase3_songs17_seed44
 # exp02 (gradient attribution); add --runs to subset, merged into summary.csv
 uv run python phase_4/exp02_gradient_spike_sources.py --device cuda:1
+# STFT ablation comparison (after phase4_stft_off_seed43 has trained: configs/train/phase4_stft_off_seed43.yaml)
+uv run python phase_4/exp03_stft_ablation.py
 # cross-run tables
 uv run python phase_4/make_summary.py
 ```
@@ -215,12 +249,13 @@ Inputs the scripts read: the checkpoints under `outputs/runs/`, the YAML configs
 `phase_3/results/seed_check`. H1/H2/H3 need a GPU with a few GB free; the training configs pin
 `cuda:0` for several runs, so pass `--device` when that device is busy.
 
-## 9. File map
+## 10. File map
 
 | file | content |
 |---|---|
 | `results/FINDINGS.md` | generated cross-run tables (H1–H4, fp16 check, exp02) |
 | `results/h1_mode_averaging.json`, `h2_cells.csv`, `h2_codebook_position.json`, `h2_consistency_check.json`, `h3_*`, `h4_*` | raw H1–H4 outputs |
 | `results/summary.csv` | tidy rows for all experiments (re-running a run now replaces its rows instead of appending) |
+| `results/exp03_stft_ablation/` | `comparison.csv`, `summary.json`, `stft_ablation.{png,pdf}` |
 | `results/exp02/` | per-run gradient JSONs, `summary.csv`, `gradient_attribution.{png,pdf}` |
 | `results/figures/` | H1–H4 figures |

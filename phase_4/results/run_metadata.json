@@ -118,5 +118,20 @@
     "best_val_loss": 4.94386425614357,
     "torch_version": "2.13.0+cu130",
     "device": "cuda:1"
+  },
+  {
+    "run": "phase4_stft_off_seed43",
+    "checkpoint": "best_val",
+    "step": 300000,
+    "eps_bug_clean": true,
+    "d_model": 128,
+    "n_layers": 4,
+    "n_heads": 4,
+    "seq_len": 512,
+    "mask_len_min": 1,
+    "mask_len_max": 4,
+    "best_val_loss": 5.011096179485321,
+    "torch_version": "2.13.0+cu130",
+    "device": "cuda:1"
   }
 ]

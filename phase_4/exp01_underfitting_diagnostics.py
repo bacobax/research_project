@@ -63,6 +63,8 @@ EPS_BUG_CLEAN = frozenset({
     # Phase B reruns (decoded_loss_log_eps=1e-3, grad_clip=1.0). Their grad_norm "spike" rate is a
     # late-training norm drift past the 100 threshold, not outliers (see phase_4/results/exp02).
     "phase1_songs04", "phase2_regularization", "phase3_regularization_seed43", "phase3_regularization_seed44",
+    # STFT-ablation twin of phase3_regularization_seed43 (same eps/clip, decoded loss off).
+    "phase4_stft_off_seed43",
 })
 
 BINS = 1024

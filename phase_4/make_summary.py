@@ -111,7 +111,10 @@ def section_h4(h4):
 
 
 def section_fp(cons):
-    rows = [(c["run"], f"{c['max_abs_delta_vs_reference']:.3f}", f"{c['max_abs_delta_vs_historical']:.3f}") for c in cons]
+    def _f(x):
+        return "-" if x is None else f"{x:.3f}"  # runs without an exported metrics.csv have no logged value
+
+    rows = [(c["run"], _f(c["max_abs_delta_vs_reference"]), _f(c["max_abs_delta_vs_historical"])) for c in cons]
     return _table(["run", "max abs. difference, fp32 batch-1 vs fp16 batch-8 reference (nats)", "max abs. difference, fp32 vs logged training-time value (nats)"], rows)
 
 
@@ -128,6 +131,33 @@ def section_exp02(exp02):
     ratios = [float(r["stft_over_token_median"]) for r in exp02]
     return _table(["run", "checkpoint step", "token-loss grad norm", "STFT-term grad norm", "waveform-L1 grad norm",
                    "STFT / token", "weight L2 norm", "weight decay"], rows), min(ratios), max(ratios)
+
+
+def section_exp03():
+    d = RESULTS / "exp03_stft_ablation"
+    if not (d / "summary.json").exists():
+        return None
+    summ = json.loads((d / "summary.json").read_text())
+    rows = _load_csv(d / "comparison.csv")
+    fin = summ["final"]
+    t_rows = []
+    for tag, m in fin["metrics"].items():
+        z = "-" if m["z"] is None else f"{m['z']:.2f}"
+        sd = "-" if m["seed_std"] is None else f"{m['seed_std']:.4g}"
+        t_rows.append((tag, f"{m['on']:+.4f}", f"{m['off']:+.4f}", f"{m['off_minus_on']:+.4f}", sd, z, m["verdict"]))
+    final_table = _table(["metric", "decoded loss ON", "decoded loss OFF", "OFF - ON", "seed std (family)",
+                          "|diff| / std", "verdict"], t_rows)
+    c_rows = []
+    for tag in ("val/combined_loss", "val/high_acc_top1", "val/low_acc_top1", "val/si_sdr_db_gap_only"):
+        if tag not in summ["final"]["metrics"] or summ["final"]["metrics"][tag]["seed_std"] is None:
+            continue
+        sd = summ["final"]["metrics"][tag]["seed_std"]
+        diff = np.array([float(r["off_minus_on"]) for r in rows if r["metric"] == tag])
+        c_rows.append((tag, len(diff), f"{diff.mean() / sd:+.2f}", f"{np.abs(diff).max() / sd:.2f}",
+                       f"{np.mean(np.abs(diff) > sd):.2f}", f"{np.mean(np.abs(diff) > 2 * sd):.2f}"))
+    curve_table = _table(["metric", "validation points", "mean diff (in std)", "max |diff| (in std)",
+                          "fraction > 1 std", "fraction > 2 std"], c_rows)
+    return final_table, curve_table
 
 
 def main():
@@ -172,6 +202,19 @@ def main():
         f"Across all measured checkpoints the STFT term's gradient norm is {100 * rmin:.1f}%-{100 * rmax:.1f}% of the "
         "token-loss gradient norm (median over batches).", "",
     ]
+    exp03 = section_exp03()
+    if exp03 is not None:
+        lines += [
+            "## Exp03 - STFT-loss training ablation (decoded loss ON vs OFF)", "",
+            "Matched twins: regularized single song, seed 43, 300k steps; the OFF run is identical except "
+            "`decoded_loss_enabled: false`. ON = `phase3_regularization_seed43` (weight 0.1). Seed std = std of "
+            "the regularization family's best-at-cutoff values over seeds 42/43/44. Verdict rule fixed in advance: "
+            "|diff| < 1 std no detectable effect, 1-2 std inconclusive, > 2 std effect.", "",
+            "Final step (300,000; also the best-validation step for both runs):", "", exp03[0], "",
+            "Across all 12 validation points (every 25k steps):", "", exp03[1], "",
+            "One seed per arm: effects below the seed spread cannot be resolved, so 'no detectable effect' is not "
+            "'no effect'. Figure: `results/exp03_stft_ablation/stft_ablation.png`.", "",
+        ]
     OUT.write_text("\n".join(lines))
     print(f"Wrote {OUT}")
 

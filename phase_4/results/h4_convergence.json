@@ -166,5 +166,9 @@
     "plateaued": false,
     "still_decreasing": true,
     "train_val_gap_at_checkpoint": null
+  },
+  {
+    "run": "phase4_stft_off_seed43",
+    "error": "no metrics.csv source registered for this run"
   }
 ]

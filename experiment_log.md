@@ -7,7 +7,7 @@ from those files, not hand-recalled. Columns whose value isn't known for a given
 "—" rather than guessed.
 
 **Task numbering**: `<phase><letter>`, e.g. `1A` = the first run under Phase 1, `2A` = the first
-Phase 2 run, `3A`/`3B`/... = Phase 3 runs. `0A`/`0B` denote the two foundational single-song runs
+Phase 2 run, `3A`/`3B`/... = Phase 3 runs. `4A` is the STFT-loss ablation (Phase 4). `0A`/`0B` denote the two foundational single-song runs
 that predate the phase-numbered structure entirely (Phase 0 only analyzed them, it trained
 nothing new). This numbering is inferred from existing phase/run directory names, not an
 existing convention in the repo — adjust if a different scheme is preferred. A rerun of an
@@ -30,6 +30,7 @@ getting a new one.
 | `phase3_regularization_seed44` (rerun) | 3B | Same two-field fix as above (`decoded_loss_log_eps: 0.001`, `grad_clip: 1.0`). Same seed 44, same 300k steps, same regularization config as the original run. | Original run had `grad_norm > 100` on 18.7% of steps. This run (with `phase3_regularization_seed43`) backs the Sec 6 seed-robustness claim for the regularization result — both were confounded by the same bug. | **Completed 2026-10-09.** Best validation combined NLL (step <= 300k) **4.9871** at step 25,000 (original run: ~5.00 family mean) — unchanged. Launch-log `Best loss: 4.1312` is the training loss. | Same as 2A: the fix did not change validation loss. |
 | `phase3_regularization_seed43` (rerun) | 3A | Same two-field fix as above. Same seed 43, same 300k steps, same regularization config as the original run. | Original run had `grad_norm > 100` on 18.6% of steps. Companion run to seed44 above for the same seed-robustness claim. | **Completed 2026-10-09.** Best validation combined NLL (step <= 300k) **5.0247** at step 300,000 (still the minimum at the cutoff). Launch-log `Best loss: 4.1222` is the training loss. | Same as 2A. Seed-family mean after rerun: regularization 5.0023 +/- 0.0198 vs. 4.9996 +/- 0.0167 before — no change. |
 | `phase1_songs04` (rerun) | 1B | Same two-field fix as above. Same seed, same 300k steps, same 4-song dataset as the original run. | Original run had `grad_norm > 100` on 6.07% of steps — the mildest of the 4 affected runs, but still a confound against the clean `phase1_songs01`/`phase1_songs17` endpoints of the Sec 3 data-scaling curve. | **Completed 2026-10-10.** Best validation combined NLL **5.0697** at step 20,000 (original: 5.0666 at step 10,000) — essentially unchanged; val NLL then rises to 5.36 by 300k. Launch-log `Best loss: 3.6636` is the training loss. | The data-scaling curve's 4-song point is unaffected by the fix. |
+| `phase4_stft_off_seed43` | 4A | Matched twin of `phase3_regularization_seed43` (3A) with **`decoded_loss_enabled: false`**; everything else identical (seed 43, 300k steps, d_model 128 / dropout 0.3 / wd 0.1, `grad_clip` 1.0, same validation setup). Config `configs/train/phase4_stft_off_seed43.yaml`, device cuda:1, ~10 h. | Does the decoded-domain STFT/waveform loss (weight 0.1) help, hurt or do nothing? Prior from Phase 4 exp02: the STFT term is only 1.5-6.5% of the token-loss gradient norm, so little effect expected. | **Completed 2026-10-11.** Twin check: training loss bit-identical to 3A before step 7000 (max diff 5e-5) and token loss within ~1e-4 afterwards. At step 300,000 (best-val step of both): val NLL 5.0111 off vs 5.0247 on (-0.014 = 0.69 seed-std); high/low top-1 0.0238/0.1172 vs 0.0195/0.1217; gap-only SI-SDR -7.01 vs -7.59 dB (+0.58 dB = 0.64 std). None of the 12 validation points differs by more than 2 seed-std on any metric; NLL is slightly lower with the loss off at 10/12 points (mean -0.4 std). Seed std = regularization family (NLL 0.020, SI-SDR 0.90 dB). | **No detectable effect** of the STFT loss in this setting; no sign it improves the audio metrics. One seed and one weight, so effects below the seed spread cannot be excluded; 17-song models not tested. Next step if more confidence is needed: seed-44 twin. Details: `phase_4/results/exp03_stft_ablation/`. |
 
 ## Notes on earlier phases (analysis-only, no table row — they didn't train anything new)
 
@@ -44,9 +45,12 @@ getting a new one.
   generalization. Degradation is visible in both the trained and OOD range for both checkpoints;
   `phase1_songs17` sits above `phase2_regularization` on gap-only SI-SDR at nearly every length,
   consistent with (but incidental to) the seed-check's data-vs-regularization finding.
-- **Phase 4, H1-H4 causal diagnostics**: folded into the `phase1_songs17` (1C) row above since
-  they were run directly against that checkpoint, no new training. Full writeup:
-  `phase_4/README.md` / `RERUN_PLAN.md` Section 10.
+- **Phase 4, causal diagnostics (no new training except 4A)**: H1-H4 first ran on the `phase1_songs17` (1C)
+  checkpoint, then (2026-10-10) on 8 clean checkpoints incl. the Phase B reruns; `phase_4/exp02` measures which
+  loss term produces the gradient (STFT 1.5-6.5% of the token gradient at 26 checkpoints of 10 runs, incl. Phase 0
+  `baseline`/`bigmodel`); `phase_4/exp03` + run 4A is the STFT-loss ablation. Writeups: `phase_4/README.md`,
+  `phase_4/METHODS.md`, `phase_4/results/FINDINGS.md`. Note: Phase 0 `baseline` `latest.pt` (step 162k) has
+  non-finite weights (the run diverged after its best checkpoint at step 78k); use `best_val`/`best`.
 
 ## Notes on the Phase B rerun batch (launched 2026-10-07)
 

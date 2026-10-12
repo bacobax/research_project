@@ -136,6 +136,11 @@ RUNS: Dict[str, Dict[str, Any]] = {
         "config": REPO_ROOT / "configs/train/phase3_regularization_seed43.yaml",
         "checkpoints": _checkpoints("phase3_seed_check/phase3_regularization_seed43"),
     },
+    # Phase 4 STFT-loss ablation: matched twin of phase3_regularization_seed43 with the decoded loss off.
+    "phase4_stft_off_seed43": {
+        "config": REPO_ROOT / "configs/train/phase4_stft_off_seed43.yaml",
+        "checkpoints": _checkpoints("phase4_stft_ablation/phase4_stft_off_seed43"),
+    },
     "phase3_regularization_seed44": {
         "config": REPO_ROOT / "configs/train/phase3_regularization_seed44.yaml",
         "checkpoints": _checkpoints("phase3_seed_check/phase3_regularization_seed44"),

@@ -43,6 +43,7 @@ RUN_TABLE = [
     ("phase3_songs17_seed43", "phase_3", "final"),
     ("phase3_songs17_seed44", "phase_3", "final"),
     ("phase3_regularization_seed43", "phase_3", "final"),
+    ("phase4_stft_off_seed43", "phase_4", "final"),
     ("phase3_regularization_seed44", "phase_3", "final"),
 ]
 
