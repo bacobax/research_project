@@ -46,6 +46,7 @@ sys.path.insert(0, str(REPO_ROOT / "phase_0"))
 sys.path.insert(0, str(REPO_ROOT / "phase_5"))
 import common as c  # noqa: E402
 import plot_style as ps  # noqa: E402
+from audio_infill.train import reallike_span, touched_frames  # noqa: E402
 
 OUT = REPO_ROOT / "phase_5" / "results" / "exp01_context_contamination"
 FIG = OUT / "figures"
@@ -84,18 +85,6 @@ class Encodings:
                 a[s:e] = 0.0
             self.cache[key] = self._encode(a)
         return self.cache[key]
-
-
-def touched_frames(s: int, e: int, hop: int) -> Tuple[int, int]:
-    return s // hop, -(-e // hop)  # floor(start), ceil(end)
-
-
-def reallike_span(g0: int, g1: int, hop: int) -> Tuple[int, int]:
-    """A zeroed span whose rounded frame bounds are exactly [g0, g1), with random sub-frame offsets
-    (start and end each uniform within +-half a frame of the mask edge), like the real gaps."""
-    rng = np.random.default_rng(1_000_003 * g0 + 17 * (g1 - g0))
-    u0, u1 = rng.uniform(0.02, 0.98, size=2)
-    return int(round((g0 - 0.5 + u0) * hop)), int(round((g1 - 0.5 + u1) * hop))
 
 
 # ---------------------------------------------------------------------------

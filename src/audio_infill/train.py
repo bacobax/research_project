@@ -161,6 +161,16 @@ class TrainConfig:
     validation_audio_metrics_enabled: bool = False
     validation_audio_metrics_max_examples: Optional[int] = None
 
+    # Phase 6: train/inference-consistency options (defaults reproduce the earlier behaviour).
+    zeroed_context_prob: float = 0.0   # share of training windows whose context is re-encoded from audio with the gap zeroed
+    zeroed_context_warmup_frames: int = 300  # extra frames encoded before the window so the causal encoder state settles
+    codebook_conditioning: str = "none"  # "none" (independent heads) or "depth_ar" (head k sees tokens of codebooks < k)
+    depth_layers: int = 2
+    validation_autocast: bool = True   # False evaluates validation in fp32
+    audio_selection_metric: Optional[str] = None  # e.g. "si_sdr_db": also keep best_audio.pt selected on it
+    inpaint_output_mode: str = "decode_all"  # "decode_all" or "splice" (only the gap's samples replace the original)
+    tb_log_figures: bool = True  # False: no matplotlib figures in TensorBoard (they were ~97% of event-file size)
+
     @property
     def checkpoint_dir(self) -> Path:
         return Path(self.output_dir) / self.run_name / "checkpoints"
@@ -1080,6 +1090,54 @@ def build_holdout_region_validation_examples(
     return grouped_examples, regions_by_band, holdout_ranges, metadata
 
 
+def touched_frames(s: int, e: int, hop: int) -> Tuple[int, int]:
+    """Frames [floor(s/hop), ceil(e/hop)) that a zeroed sample span [s, e) touches."""
+    return s // hop, -(-e // hop)
+
+
+def reallike_span(g0: int, g1: int, hop: int, rng: Optional[np.random.Generator] = None) -> Tuple[int, int]:
+    """A zeroed sample span whose rounded frame bounds are exactly [g0, g1), with random
+    sub-frame offsets (start and end each within +-half a frame of the mask edge), like the real
+    gaps. Deterministic per (g0, g1) when no generator is given (used by validation and Phase 5)."""
+    if rng is None:
+        rng = np.random.default_rng(1_000_003 * g0 + 17 * (g1 - g0))
+    u0, u1 = rng.uniform(0.02, 0.98, size=2)
+    return int(round((g0 - 0.5 + u0) * hop)), int(round((g1 - 0.5 + u1) * hop))
+
+
+def splice_gap_audio(
+    base: np.ndarray,
+    decoded: np.ndarray,
+    decoded_offset: int,
+    start: int,
+    end: int,
+    fade: int,
+) -> np.ndarray:
+    """Copy of `base` (the gapped input audio) with its samples [start, end) taken from `decoded`.
+
+    `decoded[i]` corresponds to sample `decoded_offset + i` of `base`. A raised-cosine cross-fade
+    of `fade` samples is applied just outside the gap, so the context stays the input audio apart
+    from those few samples and no re-encoded context reaches the output."""
+    out = np.array(base, dtype=np.float32, copy=True)
+    lo = max(0, start - fade)
+    hi = min(len(out), end + fade)
+    a = max(lo, decoded_offset)
+    b = min(hi, decoded_offset + len(decoded))
+    if b <= a:
+        return out
+    weight = np.ones(b - a, dtype=np.float32)
+    idx = np.arange(a, b)
+    if fade > 0:
+        left = idx < start
+        right = idx >= end
+        weight[left] = 0.5 - 0.5 * np.cos(np.pi * (idx[left] - (start - fade) + 1) / (fade + 1))
+        weight[right] = 0.5 + 0.5 * np.cos(np.pi * (idx[right] - end + 1) / (fade + 1))
+    else:
+        weight[(idx < start) | (idx >= end)] = 0.0
+    out[a:b] = weight * decoded[a - decoded_offset:b - decoded_offset] + (1.0 - weight) * out[a:b]
+    return out
+
+
 class AudioEncoder:
     def __init__(self, bandwidth: float, device: torch.device):
         from encodec import EncodecModel
@@ -1244,6 +1302,10 @@ class ActivityAwareMaskedSpanDataset(Dataset):
         self.token_change_cumsum = _build_cumsum(self.token_change_per_frame)
         self.active_indices = np.nonzero(active_flag > 0.5)[0]
         self.recent_metrics: deque = deque(maxlen=4096)
+        # When True, __getitem__ also returns [song_idx, window_start] so the trainer can
+        # re-encode the window from audio with the gap zeroed.
+        self.return_meta = False
+        self.song_idx = 0
 
         self._build_valid_starts_and_weights()
 
@@ -1450,6 +1512,8 @@ class ActivityAwareMaskedSpanDataset(Dataset):
             }
         )
 
+        if self.return_meta:
+            return x, y, loss_mask, torch.tensor([self.song_idx, s], dtype=torch.long)
         return x, y, loss_mask
 
 
@@ -1505,6 +1569,12 @@ class MultiSongMaskedSpanDataset(Dataset):
 
     def __len__(self) -> int:
         return self.virtual_size
+
+    def enable_meta(self) -> None:
+        """Make every sample also carry [song_idx, window_start] (see ActivityAwareMaskedSpanDataset)."""
+        for i, ds in enumerate(self.datasets):
+            ds.song_idx = i
+            ds.return_meta = True
 
     def _sample_song_index(self) -> int:
         return int(torch.multinomial(self.song_weights_t, 1, replacement=True).item())
@@ -1633,6 +1703,7 @@ class JointCodebookInfiller(_CodebookInfillerBase):
         segment_ids: Optional[torch.Tensor] = None,
         left_dist_idx: Optional[torch.Tensor] = None,
         right_dist_idx: Optional[torch.Tensor] = None,
+        gap_targets: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         B, K, T = x.shape
         if segment_ids is None or left_dist_idx is None or right_dist_idx is None:
@@ -1662,6 +1733,8 @@ class EncoderDecoderCodebookInfiller(_CodebookInfillerBase):
         max_len: int = 2048,
         dropout: float = 0.1,
         boundary_max_distance: int = 128,
+        codebook_conditioning: str = "none",
+        depth_layers: int = 2,
     ):
         super().__init__(
             K=K,
@@ -1695,13 +1768,74 @@ class EncoderDecoderCodebookInfiller(_CodebookInfillerBase):
         self.enc = nn.TransformerEncoder(enc_layer, num_layers=n_layers)
         self.dec = nn.TransformerDecoder(dec_layer, num_layers=n_layers)
 
+        if codebook_conditioning not in {"none", "depth_ar"}:
+            raise ValueError("codebook_conditioning must be 'none' or 'depth_ar'")
+        self.codebook_conditioning = codebook_conditioning
+        if codebook_conditioning == "depth_ar":
+            # Small causal transformer over the K codebook positions of each gap frame
+            # (RQ-Transformer style): position k sees the decoder state and the tokens of
+            # codebooks 0..k-1 of the same frame. Created only when requested, so the
+            # state dict of an unconditioned model is unchanged.
+            self.depth_tok_emb = nn.ModuleList([nn.Embedding(bins, d_model) for _ in range(K - 1)])
+            self.depth_start = nn.Parameter(torch.zeros(d_model))
+            self.depth_pos = nn.Embedding(K, d_model)
+            depth_layer = nn.TransformerEncoderLayer(
+                d_model=d_model,
+                nhead=n_heads,
+                dim_feedforward=4 * d_model,
+                dropout=dropout,
+                batch_first=True,
+                activation="gelu",
+                norm_first=True,
+            )
+            self.depth = nn.TransformerEncoder(depth_layer, num_layers=depth_layers)
+
+    def _depth_inputs(self, h: torch.Tensor, prev_tokens: torch.Tensor, upto: int) -> torch.Tensor:
+        """h: (N, d) decoder states; prev_tokens: (N, >=upto) tokens of codebooks 0..upto-1.
+        Returns (N, upto + 1, d) inputs for depth positions 0..upto."""
+        N = h.shape[0]
+        pos = self.depth_pos(torch.arange(upto + 1, device=h.device)).unsqueeze(0)
+        parts = [self.depth_start.view(1, 1, -1).expand(N, 1, -1)]
+        for k in range(upto):
+            parts.append(self.depth_tok_emb[k](prev_tokens[:, k]).unsqueeze(1))
+        return self.dropout(h.unsqueeze(1) + torch.cat(parts, dim=1) + pos)
+
+    def _depth_logits(self, decoded: torch.Tensor, gap_tgt: Optional[torch.Tensor]) -> torch.Tensor:
+        """decoded: (B, G, d). gap_tgt: (B, K, G) teacher-forcing tokens, or None for greedy
+        decoding over codebooks. Returns logits (B, K, G, bins)."""
+        B, G, d = decoded.shape
+        K = self.K
+        h = decoded.reshape(B * G, d)
+        if gap_tgt is not None:
+            prev = gap_tgt.permute(0, 2, 1).reshape(B * G, K)
+            inp = self._depth_inputs(h, prev, K - 1)
+            causal = torch.triu(torch.ones(K, K, device=h.device, dtype=torch.bool), diagonal=1)
+            out = self.depth(inp, mask=causal)
+            logits = torch.stack([self.head[k](out[:, k]) for k in range(K)], dim=1)  # (N, K, bins)
+        else:
+            prev = h.new_zeros((B * G, K), dtype=torch.long)
+            step_logits = []
+            for k in range(K):
+                inp = self._depth_inputs(h, prev, k)
+                causal = torch.triu(torch.ones(k + 1, k + 1, device=h.device, dtype=torch.bool), diagonal=1)
+                out = self.depth(inp, mask=causal)
+                lk = self.head[k](out[:, k])
+                step_logits.append(lk)
+                prev[:, k] = lk.argmax(dim=-1)
+            logits = torch.stack(step_logits, dim=1)
+        return logits.reshape(B, G, K, self.bins).permute(0, 2, 1, 3)
+
     def forward(
         self,
         x: torch.Tensor,
         segment_ids: Optional[torch.Tensor] = None,
         left_dist_idx: Optional[torch.Tensor] = None,
         right_dist_idx: Optional[torch.Tensor] = None,
+        gap_targets: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """`gap_targets` (B, K, T) are the clean tokens; they are used only when
+        codebook_conditioning == "depth_ar", for teacher forcing. Without them the codebooks
+        of each gap frame are decoded greedily, which is what inference does."""
         B, K, T = x.shape
         if segment_ids is None or left_dist_idx is None or right_dist_idx is None:
             segment_ids, left_dist_idx, right_dist_idx = build_boundary_condition_tensors_from_mask_token(
@@ -1788,7 +1922,16 @@ class EncoderDecoderCodebookInfiller(_CodebookInfillerBase):
             tgt_key_padding_mask=gap_padding_mask,
             memory_key_padding_mask=ctx_padding_mask,
         )
-        gap_logits = self._project_logits(decoded)
+        if self.codebook_conditioning == "depth_ar":
+            gap_tgt = None
+            if gap_targets is not None:
+                gap_tgt = gap_targets.new_zeros((B, K, max_gap))
+                for b in range(B):
+                    gl = int(gap_lengths[b].item())
+                    gap_tgt[b, :, :gl] = gap_targets[b, :, gap_indices[b, :gl]]
+            gap_logits = self._depth_logits(decoded, gap_tgt)
+        else:
+            gap_logits = self._project_logits(decoded)
 
         full_logits = gap_logits.new_zeros((B, K, T, self.bins))
         for b in range(B):
@@ -2204,6 +2347,13 @@ class Trainer:
                 virtual_size=pivot_dataset.virtual_size,
             )
 
+        self.song_wavs = [self.wav] + [smp["wav"] for smp in self.extra_samples]
+        if cfg.zeroed_context_prob > 0:
+            if hasattr(self.dataset, "enable_meta"):
+                self.dataset.enable_meta()
+            else:
+                self.dataset.song_idx = 0
+                self.dataset.return_meta = True
         self.dataloader = DataLoader(
             self.dataset,
             batch_size=cfg.batch_size,
@@ -2314,6 +2464,21 @@ class Trainer:
         for key, value in {**holdout_summary, **validation_metadata}.items():
             self.writer.add_scalar(f"validation/{key}", float(value), 0)
 
+        self.validation_dataloaders_clean: Dict[str, DataLoader] = {}
+        if cfg.zeroed_context_prob > 0:
+            # Primary validation uses inference-style (zeroed-gap) context; the clean-context
+            # copy of the same examples is kept as a reference ("val_clean/*").
+            for group_name, items in loader_examples.items():
+                self.validation_dataloaders_clean[group_name] = DataLoader(
+                    FixedMaskedSpanDataset(items), batch_size=val_batch_size, shuffle=False, num_workers=0,
+                    pin_memory=(self.device.type == "cuda"), drop_last=False,
+                )
+            loader_examples = {
+                group_name: [self._zero_context_example(ex) for ex in items]
+                for group_name, items in loader_examples.items()
+            }
+            logger.info("Validation context re-encoded with the gap zeroed (%d groups).", len(loader_examples))
+
         for group_name, items in loader_examples.items():
             dataset = FixedMaskedSpanDataset(items)
             self.validation_dataloaders[group_name] = DataLoader(
@@ -2350,6 +2515,11 @@ class Trainer:
     def _build_model(self):
         cfg = self.cfg
         model_cls = EncoderDecoderCodebookInfiller if cfg.use_encoder_decoder else JointCodebookInfiller
+        extra_kwargs: Dict[str, Any] = {}
+        if cfg.codebook_conditioning != "none":
+            if not cfg.use_encoder_decoder:
+                raise ValueError("codebook_conditioning requires use_encoder_decoder: true")
+            extra_kwargs = dict(codebook_conditioning=cfg.codebook_conditioning, depth_layers=cfg.depth_layers)
         self.model = model_cls(
             K=self.K,
             bins=self.bins,
@@ -2360,6 +2530,7 @@ class Trainer:
             max_len=cfg.max_len,
             dropout=cfg.dropout,
             boundary_max_distance=cfg.boundary_max_distance,
+            **extra_kwargs,
         ).to(self.device)
 
         n_params = sum(p.numel() for p in self.model.parameters())
@@ -2487,6 +2658,92 @@ class Trainer:
     def _set_lr(self, lr: float):
         for pg in self.optimizer.param_groups:
             pg["lr"] = lr
+
+    @torch.no_grad()
+    def _encode_zeroed_windows(
+        self,
+        items: List[Tuple[torch.Tensor, int, int, int, int, Optional[np.random.Generator]]],
+    ) -> Tuple[torch.Tensor, List[int]]:
+        """Tokens of windows encoded the way inference encodes a gapped file.
+
+        Each item is (wav [1, N], window_start_frame, window_len_frames, gap_local_start,
+        gap_local_end, rng). The audio from `zeroed_context_warmup_frames` before the window to
+        its end is cut out, a real-like span rounding to the gap is set to zero, everything is
+        encoded (EnCodec's encoder is causal, so the warm-up only settles its state) and the
+        warm-up frames are dropped. Returns ([n, K, window_len] tokens on the model device, local
+        index of the first frame the zeroing touches for each item). Frames before that index equal
+        the clean encoding (the encoder is causal) and the windowed encoding approximates them worse
+        than the clean whole-song tokens do, so callers keep the clean tokens there
+        (phase_6/results/preflight_zeroed_context.json)."""
+        hop = self.cfg.target_sr // self.encoder.frame_rate
+        warm = int(self.cfg.zeroed_context_warmup_frames)
+        segs: List[Tuple[int, torch.Tensor, int, int]] = []
+        first_touched: List[int] = []
+        for wav, s, T, m0, m1, rng in items:
+            w0 = max(0, s - warm)
+            lo, hi = w0 * hop, (s + T) * hop
+            seg = wav[:, lo:min(hi, wav.shape[-1])]
+            if seg.shape[-1] < hi - lo:
+                seg = F.pad(seg, (0, hi - lo - seg.shape[-1]))
+            seg = seg.clone()
+            zs, ze = reallike_span(s + m0, s + m1, hop, rng)
+            seg[:, max(0, zs - lo):max(0, ze - lo)] = 0.0
+            first_touched.append(max(0, min(m0, touched_frames(zs, ze, hop)[0] - s)))
+            segs.append((s - w0, seg, T, len(segs)))
+        out: List[Optional[torch.Tensor]] = [None] * len(items)
+        by_len: Dict[Tuple[int, int], List[Tuple[int, torch.Tensor, int, int]]] = defaultdict(list)
+        for entry in segs:
+            by_len[(entry[0], entry[1].shape[-1])].append(entry)
+        for (drop, _), group in by_len.items():
+            batch = torch.stack([g[1] for g in group], dim=0).to(self.device)
+            codes = self.encoder.model.encode(batch)[0][0]  # [B, K, frames]
+            for j, g in enumerate(group):
+                out[g[3]] = codes[j, :, drop:drop + g[2]].long()
+        return torch.stack(out, dim=0), first_touched
+
+    def _apply_zeroed_context(self, x: torch.Tensor, loss_mask: torch.Tensor, meta: torch.Tensor) -> torch.Tensor:
+        """Replace the context tokens of a random subset of the batch (probability
+        `zeroed_context_prob` per window) by the zeroed-gap encoding; `y` stays clean."""
+        B, K, T = x.shape
+        use = [b for b in range(B) if random.random() < self.cfg.zeroed_context_prob]
+        if not use:
+            return x
+        rng = np.random.default_rng(random.getrandbits(63))
+        lm = loss_mask.detach().cpu()
+        items = []
+        for b in use:
+            idx = lm[b].nonzero().flatten()
+            items.append((self.song_wavs[int(meta[b, 0])], int(meta[b, 1]), T,
+                          int(idx[0]), int(idx[-1]) + 1, rng))
+        enc, first = self._encode_zeroed_windows(items)
+        x = x.clone()
+        for j, b in enumerate(use):
+            xb = x[b].clone()  # clean tokens (gap masked): kept before the first touched frame
+            xb[:, first[j]:] = enc[j][:, first[j]:].to(x.device)
+            xb[:, loss_mask[b]] = self.mask_token
+            x[b] = xb
+        return x
+
+    def _zero_context_example(self, ex: "FixedValidationExample") -> "FixedValidationExample":
+        """A validation example whose context comes from the zeroed-gap encoding (deterministic)."""
+        T = int(ex.y.shape[1])
+        enc, first = self._encode_zeroed_windows(
+            [(self.wav, int(ex.window_start), T, int(ex.mask_start), int(ex.mask_start + ex.mask_len), None)]
+        )
+        x = ex.x.clone()
+        x[:, first[0]:] = enc[0][:, first[0]:].cpu()
+        x[:, ex.loss_mask] = self.mask_token
+        return FixedValidationExample(
+            x=x, y=ex.y, loss_mask=ex.loss_mask, band=ex.band, sample_name=ex.sample_name,
+            mask_mean_activity=ex.mask_mean_activity, mask_len=ex.mask_len,
+            window_start=ex.window_start, mask_start=ex.mask_start,
+        )
+
+    def _teacher_forcing_kwargs(self, y: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Clean targets for the conditioned codebook heads (teacher forcing); nothing otherwise."""
+        if self.cfg.codebook_conditioning == "depth_ar":
+            return {"gap_targets": y}
+        return {}
 
     def _compute_loss(self, logits: torch.Tensor, y: torch.Tensor, loss_mask: torch.Tensor) -> torch.Tensor:
         B, K, T, V = logits.shape
@@ -2899,7 +3156,7 @@ class Trainer:
                 )
 
                 figure_prefix = f"validation_inspect/{group_name}/{example_id}"
-                if hasattr(self.writer, "add_figure"):
+                if hasattr(self.writer, "add_figure") and self.cfg.tb_log_figures:
                     self.writer.add_figure(f"{figure_prefix}/spectrogram_full", full_fig, step)
                     self.writer.add_figure(f"{figure_prefix}/spectrogram_gap_crop", crop_fig, step)
                     self.writer.add_figure(f"{figure_prefix}/waveform", wave_fig, step)
@@ -2957,6 +3214,7 @@ class Trainer:
             return None
 
         self.model.eval()
+        t_val0 = time.time()
         use_amp = self.device.type == "cuda"
         band_totals: Dict[str, Dict[str, float]] = {
             "high_activity": {"loss": 0.0, "acc_top1": 0.0, "acc_top5": 0.0, "count": 0.0},
@@ -2975,9 +3233,20 @@ class Trainer:
                     y = y.to(self.device, non_blocking=True)
                     loss_mask = loss_mask.to(self.device, non_blocking=True).bool()
                     seg_ids, left_idx, right_idx = self._build_model_boundary_tensors(loss_mask)
-                    with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=use_amp):
-                        logits = self.model(x, seg_ids, left_idx, right_idx)
-                        loss = self._compute_loss(logits, y, loss_mask)
+                    with torch.autocast(
+                        device_type=self.device.type,
+                        dtype=torch.float16,
+                        enabled=use_amp and self.cfg.validation_autocast,
+                    ):
+                        if self.cfg.codebook_conditioning == "depth_ar":
+                            # NLL is the teacher-forced (exact joint) one; accuracy comes from
+                            # the greedy pass, which is what inference produces.
+                            logits_tf = self.model(x, seg_ids, left_idx, right_idx, gap_targets=y)
+                            loss = self._compute_loss(logits_tf, y, loss_mask)
+                            logits = self.model(x, seg_ids, left_idx, right_idx)
+                        else:
+                            logits = self.model(x, seg_ids, left_idx, right_idx)
+                            loss = self._compute_loss(logits, y, loss_mask)
                     metrics = self._compute_masked_metrics(logits, y, loss_mask)
                     batch_size = int(x.shape[0])
                     total_loss += float(loss.item()) * batch_size
@@ -3029,16 +3298,32 @@ class Trainer:
         combined_loss = float(np.mean([band_results["high_activity"]["loss"], band_results["low_activity"]["loss"]]))
         self.writer.add_scalar("val/combined_loss", combined_loss, step)
 
+        t_tok = time.time()
+        audio_combined: Optional[Dict[str, float]] = None
         if self.cfg.validation_audio_metrics_enabled:
-            self._run_validation_audio_metrics(step, group_specs)
+            audio_combined = self._run_validation_audio_metrics(step, group_specs)
+        t_audio = time.time()
+        if getattr(self, "validation_dataloaders_clean", None):
+            self._run_clean_reference_validation(step, use_amp)
+        t_clean = time.time()
 
         self._log_validation_inspection(step)
+        logger.info(
+            "Validation timing at step %d: token pass %.1fs, audio metrics %.1fs, clean reference %.1fs, inspection %.1fs",
+            step, t_tok - t_val0, t_audio - t_tok, t_clean - t_audio, time.time() - t_clean,
+        )
         self.model.train()
 
         improved = combined_loss < self.best_val_loss
         if improved:
             self.best_val_loss = combined_loss
             self.save_checkpoint("best_val")
+        if self.cfg.audio_selection_metric and audio_combined is not None:
+            value = audio_combined.get(self.cfg.audio_selection_metric, float("nan"))
+            if math.isfinite(value) and value > getattr(self, "best_val_audio", float("-inf")):
+                self.best_val_audio = value
+                self.save_checkpoint("best_audio")
+                logger.info("New best %s=%.3f at step %d (best_audio.pt)", self.cfg.audio_selection_metric, value, step)
 
         self.early_stop_triggered = self._update_early_stopping(improved, combined_loss, step)
 
@@ -3052,7 +3337,7 @@ class Trainer:
 
     _AUDIO_METRIC_KEYS = ("si_sdr_db", "si_sdr_db_gap_only", "spectral_convergence", "spectral_convergence_gap_only")
 
-    def _run_validation_audio_metrics(self, step: int, group_specs: Dict[str, "ValidationGroupSpec"]) -> None:
+    def _run_validation_audio_metrics(self, step: int, group_specs: Dict[str, "ValidationGroupSpec"]) -> Dict[str, float]:
         """Decoded-audio SI-SDR / spectral convergence, logged per group/band/combined with the
         same aggregation convention as the token-loss metrics above: count-weighted mean across
         groups within a band, then an unweighted mean of the two band means for the combined
@@ -3084,9 +3369,45 @@ class Trainer:
             for key, value in band_audio_results[band].items():
                 self.writer.add_scalar(f"{prefix}_{key}", value, step)
 
+        combined_audio: Dict[str, float] = {}
         for key in self._AUDIO_METRIC_KEYS:
             combined_value = float(np.mean([band_audio_results["high_activity"][key], band_audio_results["low_activity"][key]]))
             self.writer.add_scalar(f"val/{key}", combined_value, step)
+            combined_audio[key] = combined_value
+        return combined_audio
+
+    @torch.no_grad()
+    def _run_clean_reference_validation(self, step: int, use_amp: bool) -> None:
+        """Token loss/accuracy of the same validation examples with clean (training-style) context,
+        logged as val_clean/*; only used when the primary validation set has zeroed-gap context."""
+        totals: Dict[str, List[float]] = {"high": [0.0, 0.0, 0.0], "low": [0.0, 0.0, 0.0]}  # loss, acc1, count
+        for group_name, loader in self.validation_dataloaders_clean.items():
+            spec = self.validation_group_specs.get(group_name)
+            root = "high" if spec is not None and spec.band == "high_activity" else "low"
+            for x, y, loss_mask in loader:
+                x = x.to(self.device); y = y.to(self.device); loss_mask = loss_mask.to(self.device).bool()
+                seg_ids, left_idx, right_idx = self._build_model_boundary_tensors(loss_mask)
+                with torch.autocast(device_type=self.device.type, dtype=torch.float16,
+                                    enabled=use_amp and self.cfg.validation_autocast):
+                    if self.cfg.codebook_conditioning == "depth_ar":
+                        logits_tf = self.model(x, seg_ids, left_idx, right_idx, gap_targets=y)
+                        loss = self._compute_loss(logits_tf, y, loss_mask)
+                        logits = self.model(x, seg_ids, left_idx, right_idx)
+                    else:
+                        logits = self.model(x, seg_ids, left_idx, right_idx)
+                        loss = self._compute_loss(logits, y, loss_mask)
+                n = int(x.shape[0])
+                totals[root][0] += float(loss.item()) * n
+                totals[root][1] += self._compute_masked_metrics(logits, y, loss_mask)["acc_top1"] * n
+                totals[root][2] += n
+        losses = []
+        for root, (l, a, n) in totals.items():
+            if n > 0:
+                self.writer.add_scalar(f"val_clean/{root}_loss", l / n, step)
+                self.writer.add_scalar(f"val_clean/{root}_acc_top1", a / n, step)
+                losses.append(l / n)
+        if len(losses) == 2:
+            self.writer.add_scalar("val_clean/combined_loss", float(np.mean(losses)), step)
 
     def _update_early_stopping(self, improved: bool, combined_loss: float, step: int) -> bool:
         """Track consecutive meaningfully-non-improving validation checks; return True once
@@ -3146,6 +3467,7 @@ class Trainer:
                 "scaler": self.scaler.state_dict(),
                 "best_loss": self.best_loss,
                 "best_val_loss": self.best_val_loss,
+                "best_val_audio": getattr(self, "best_val_audio", float("-inf")),
                 "config": vars(self.cfg),
                 "rng_state": rng_state,
             },
@@ -3161,6 +3483,12 @@ class Trainer:
             raise ValueError(
                 "Checkpoint architecture mismatch: checkpoint use_encoder_decoder="
                 f"{ckpt_use_encoder_decoder}, current config use_encoder_decoder={self.cfg.use_encoder_decoder}"
+            )
+        ckpt_conditioning = str(ckpt_cfg.get("codebook_conditioning", "none"))
+        if ckpt_conditioning != self.cfg.codebook_conditioning:
+            raise ValueError(
+                f"Checkpoint codebook_conditioning={ckpt_conditioning} does not match "
+                f"config codebook_conditioning={self.cfg.codebook_conditioning}"
             )
         model_state = ckpt["model"]
         boundary_compat_mode = False
@@ -3195,6 +3523,7 @@ class Trainer:
         self.global_step = ckpt["step"]
         self.best_loss = ckpt.get("best_loss", float("inf"))
         self.best_val_loss = ckpt.get("best_val_loss", float("inf"))
+        self.best_val_audio = ckpt.get("best_val_audio", float("-inf"))
         if "rng_state" in ckpt:
             rng = ckpt["rng_state"]
             random.setstate(rng["python"])
@@ -3250,21 +3579,25 @@ class Trainer:
                 cur_min, cur_max, cur_progress = self._curriculum_update(step)
 
             try:
-                x, y, loss_mask = next(data_iter)
+                batch = next(data_iter)
             except StopIteration:
                 data_iter = iter(self.dataloader)
-                x, y, loss_mask = next(data_iter)
+                batch = next(data_iter)
+            x, y, loss_mask = batch[:3]
+            batch_meta = batch[3] if len(batch) > 3 else None
 
             x = x.to(self.device, non_blocking=True)
             y = y.to(self.device, non_blocking=True)
             loss_mask = loss_mask.to(self.device, non_blocking=True).bool()
+            if batch_meta is not None:
+                x = self._apply_zeroed_context(x, loss_mask, batch_meta)
             seg_ids, left_idx, right_idx = self._build_model_boundary_tensors(loss_mask)
 
             lr = self._get_lr(step)
             self._set_lr(lr)
 
             with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=use_amp):
-                logits = self.model(x, seg_ids, left_idx, right_idx)
+                logits = self.model(x, seg_ids, left_idx, right_idx, **self._teacher_forcing_kwargs(y))
                 total_loss, token_loss, decoded_metrics = self._compute_training_losses(
                     x,
                     logits,
@@ -3487,6 +3820,19 @@ class Trainer:
 
         codes_filled = self.codes.clone()
 
+        splice = cfg.inpaint_output_mode == "splice"
+        hop = 0
+        wav_out: Optional[np.ndarray] = None
+        sample_spans: List[Tuple[int, int]] = []
+        if splice:
+            hop = cfg.target_sr // self.encoder.frame_rate
+            ann = getattr(cfg, "_annotation", None)
+            if not ann or "gaps" not in ann:
+                raise ValueError("inpaint_output_mode='splice' needs the annotation's exact gap sample spans")
+            sample_spans = [(int(g["gap_start_sample"]), int(g["gap_end_sample"])) for g in ann["gaps"]]
+            wav_out = self.wav.squeeze(0).numpy().astype(np.float32, copy=True)
+        fade = int(round(0.0025 * cfg.target_sr))  # ~2.5 ms
+
         for i, (g0, g1) in enumerate(self.gaps_f):
             gap_len = g1 - g0
             logger.info(
@@ -3528,9 +3874,16 @@ class Trainer:
             # Write back
             codes_filled[:, L:R] = xb[0].cpu()
 
+            if splice:
+                decoded_win = self._decode_validation_window_audio(codes_filled[:, L:R])
+                wav_out = splice_gap_audio(wav_out, decoded_win, L * hop, sample_spans[i][0], sample_spans[i][1], fade)
+
             if save_crop_samples:
                 orig_crop = self._decode_validation_window_audio(self.codes[:, L:R])
-                filled_crop = self._decode_validation_window_audio(codes_filled[:, L:R])
+                if splice:
+                    filled_crop = wav_out[L * hop:L * hop + len(orig_crop)]
+                else:
+                    filled_crop = self._decode_validation_window_audio(codes_filled[:, L:R])
                 wav_path = cfg.samples_dir / f"gap{i}_step_{self.global_step}.wav"
                 save_waveform(wav_path, filled_crop, cfg.target_sr)
                 fig = make_log_spectrogram_comparison_figure(
@@ -3539,7 +3892,8 @@ class Trainer:
                     sr=cfg.target_sr,
                     title_prefix=f"gap{i} frames[{g0},{g1}) step={self.global_step}",
                 )
-                self.writer.add_figure(f"audio/gap{i}_comparison", fig, self.global_step)
+                if cfg.tb_log_figures:
+                    self.writer.add_figure(f"audio/gap{i}_comparison", fig, self.global_step)
                 plt.close(fig)
 
         if save_crop_samples:
@@ -3550,7 +3904,7 @@ class Trainer:
             )
             return None
 
-        wav_filled = self.encoder.decode(codes_filled, self.scale)
+        wav_filled = wav_out if splice else self.encoder.decode(codes_filled, self.scale)
 
         if output_path:
             import soundfile as sf
@@ -3590,11 +3944,13 @@ class Trainer:
         wav_orig = self.wav.squeeze(0).numpy()
 
         fig_orig = self._make_spectrogram_figure(wav_orig, "Original (gapped)", sr)
-        self.writer.add_figure("audio/spectrogram_original_gapped", fig_orig, self.global_step)
+        if self.cfg.tb_log_figures:
+            self.writer.add_figure("audio/spectrogram_original_gapped", fig_orig, self.global_step)
         plt.close(fig_orig)
 
         fig_recon = self._make_spectrogram_figure(wav_filled, "Reconstructed (infilled)", sr)
-        self.writer.add_figure("audio/spectrogram_reconstructed", fig_recon, self.global_step)
+        if self.cfg.tb_log_figures:
+            self.writer.add_figure("audio/spectrogram_reconstructed", fig_recon, self.global_step)
         plt.close(fig_recon)
 
         self.writer.flush()

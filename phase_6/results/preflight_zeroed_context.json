@@ -1,0 +1,41 @@
+{
+  "clean_tokens_vs_whole_song_zeroed": {
+    "before": 0.9983527113993963,
+    "after": 0.739385087043047
+  },
+  "songs": [
+    "001_Einaudi_Le_Onde.wav",
+    "002_Ludovico_Einaudi_-_Nefeli_Visualiser.wav",
+    "003_Einaudi_Melodia_Africana_III.wav"
+  ],
+  "windows_per_song": 16,
+  "agreement_with_whole_song_zeroed_encoding": {
+    "0": {
+      "before": 0.6514881805827221,
+      "after": 0.8316000041862329
+    },
+    "75": {
+      "before": 0.7335589155554771,
+      "after": 0.8407518739501635
+    },
+    "150": {
+      "before": 0.7641333875556787,
+      "after": 0.8455735680957636
+    },
+    "300": {
+      "before": 0.7978064902126789,
+      "after": 0.8548039644956589
+    },
+    "750": {
+      "before": 0.841070598612229,
+      "after": 0.8783763311803341
+    },
+    "1500": {
+      "before": 0.8817913184563319,
+      "after": 0.902546669046084
+    }
+  },
+  "encode_batch16_seconds_W150": 0.07426056861877442,
+  "encode_batch16_seconds_W750": 0.13958368301391602,
+  "encode_batch16_seconds_W1500": 0.22375912666320802
+}
