@@ -8,7 +8,7 @@ were, and what it can and cannot support. Numbers live in `results/` (tables reg
 
 ## 0. Scope
 
-Phase 4 asks *why* the inpainting model underfits (RERUN_PLAN.md Section 10) using only
+Phase 4 asks *why* the inpainting model underfits (docs/RERUN_PLAN.md Section 10) using only
 evaluation of already-trained checkpoints — **no training happens in Phase 4**. All analyses are
 on the project's key material: the single song with carved real gaps (Nuvole Bianche), held-out
 regions of it, gap lengths 1–4 frames (13–53 ms), which is also the range the models trained on.

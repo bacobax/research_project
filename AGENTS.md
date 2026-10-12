@@ -1,27 +1,33 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
-`src/audio_infill/` contains runtime code: `train.py`, `config.py`, `make_gapped_dataset.py`, and `graph.py`. Keep new Python modules under `src/audio_infill/`.
+Audio-infill research project: a transformer inpaints short gaps in EnCodec tokens of solo piano. Phases 0-6 are experiments (`phase_N/`); human-oriented map in `docs/SUPERVISOR_GUIDE.md`. Read docs on demand, not up front.
 
-`configs/train/*.yaml` and `configs/data/*.yaml` store experiment settings; prefer new YAML over hard-coded values. `scripts/*.sh` are thin wrappers that use `uv run` and pick a config. `tests/test_*.py` covers config parsing, dataset logic, validation, and decoded-loss behavior. Exploratory work belongs in `notebooks/`, figures in `docs/figures/`, and prompt assets in `assets/prompts/`.
+## Layout
+- `src/audio_infill/`: runtime code (`train.py`, `config.py`, `make_gapped_dataset.py`, `download_data.py`, `graph.py`). New modules go here.
+- `configs/train|data/*.yaml`: all experiment settings; prefer new YAML over hard-coded values.
+- `scripts/`: thin `uv run` wrappers plus `scaffold_phase.py`, `export_gap_audio_samples.py`.
+- `phase_N/`: experiment scripts; tracked results in `phase_N/results/`; reading guide `phase_N/INTERPRETING_RESULTS.md`.
+- `docs/`: `SUPERVISOR_GUIDE.md`, `interpreting_results.md`, `experiment_log.md` (one row per run; update when launching/finishing a run), `RERUN_PLAN.md`, `archive/` (stale, ignore).
+- `tests/test_*.py`, `notebooks/`, `docs/figures/`, `assets/prompts/`.
+- Untracked/huge: `outputs/` (~9 GB), `data/`, `dataset/`, checkpoints. Never read or commit them; never glob `outputs/`.
 
-## Build, Test, and Development Commands
-Run all commands from the repository root. uv uses `.python-version` and manages the project-local `.venv`; do not activate or modify a shared environment.
+## Commands (repo root; uv only, never pip/conda/activate)
+- `uv sync`; `uv run pytest -q`; `scripts/smoke_test.sh`; `scripts/run_train.sh` / `resume.sh`.
+- `scripts/download_data.sh` (`audio-infill-download`) fetches data/weights; see `SETUP.md` for the full reproduce sequence.
+- `uv run audio-infill-dataset --help`; `uv run python scripts/scaffold_phase.py N` starts a new phase.
 
-- `uv sync`: create or refresh `.venv` from `uv.lock`.
-- `uv run pytest -q`: run the full test suite.
-- `uv run python -m unittest discover -s tests -p 'test_*.py'`: standard-library test fallback.
-- `scripts/smoke_test.sh`: run the smallest training config for a fast pipeline check.
-- `scripts/run_train.sh` or `scripts/resume.sh`: start the default long run or resume flow.
-- `uv run audio-infill-dataset --help`: inspect dataset-generation options.
+## Style
+4-space indent, snake_case (files, functions, YAML keys), PascalCase classes. Add docstrings to new code; match local logging/config patterns; keep diffs small. Shell scripts: `set -euo pipefail`.
 
-## Coding Style & Naming Conventions
-Follow the existing Python style: 4-space indentation, snake_case for functions, variables, files, and YAML keys, and PascalCase for dataclasses and `unittest.TestCase` classes. Keep imports readable, use type hints where surrounding code does, and match local logging/config patterns.
+## Testing
+Tests are `unittest`, pytest-compatible, in `tests/test_<feature>.py`. Config schema changes: update both config dataclasses (`config.py` and `train.py`'s `TrainConfig` must stay in sync) and add parser tests. Training-loop changes need a smoke-level assertion.
+Known failures on a clean checkout (9): 8 need legacy `data/processed` fixtures that can't be rebuilt; `test_zeroed_context::test_context_changes_only_after_gap_and_targets_untouched` fails on HEAD too.
 
-No formatter or linter config is checked in, so keep changes small, consistent, and easy to diff. Shell scripts should stay minimal and use `set -euo pipefail`.
+## Gotchas
+- Check `nvidia-smi` before launching training; configs pin a `device` (often `cuda:1`).
+- Check `df -h /` before large writes; keep phase results small (CSV/JSON/PNG/PDF).
+- Report validation with `val/combined_loss`, not the log's `Best loss:` (a training average).
+- Every analysis gets charts as PNG+PDF, not just tables.
 
-## Testing Guidelines
-Add tests as `tests/test_<feature>.py`. The suite uses `unittest` and should stay `pytest`-compatible. When changing config schema, update both config dataclasses and add parser coverage. For training-loop changes, include at least one smoke-level assertion around validation, checkpoints, or scheduling.
-
-## Commit & Pull Request Guidelines
-Recent commits use short, imperative subjects such as `validation set` and `big refactor + activity sampling`. Keep commit titles brief and specific. Pull requests should summarize the purpose, list the configs/scripts/modules touched, and include the exact test command run. Attach plots or screenshots only when training behavior or generated figures changed. Do not commit generated `outputs/`, checkpoints, or `data/` artifacts.
+## Commits / PRs
+Short imperative subjects. PRs: purpose, configs/scripts/modules touched, exact test command run. Don't commit `outputs/`, checkpoints, `data/`.

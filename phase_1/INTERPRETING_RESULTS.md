@@ -14,7 +14,7 @@ Three runs differ only in the training data and budget; the validation set (pivo
 
 Hypothesis: more music lowers held-out loss and raises accuracy and audio quality. Conclusion is read from `val/combined_loss`, per-band accuracy and the audio metrics at each run's best-validation step.
 Budgets are not matched (100k / 300k / 1M), so "more songs" is confounded with "more steps"; Phase 3 partially addresses this with a matched 300k cutoff.
-Config differences visible in `configs/*.yaml`: `songs04` (rerun) and `songs17` use `decoded_loss_log_eps: 0.001` and `grad_clip: 1.0`; the `songs01` snapshot has the old 1e-7 default and clip 1.5 (`RERUN_PLAN.md` documents the STFT epsilon issue; Phase 4 exp02 later showed the STFT term is only 1.5-6.5% of the gradient norm and the rerun did not change validation NLL).
+Config differences visible in `configs/*.yaml`: `songs04` (rerun) and `songs17` use `decoded_loss_log_eps: 0.001` and `grad_clip: 1.0`; the `songs01` snapshot has the old 1e-7 default and clip 1.5 (`docs/RERUN_PLAN.md` documents the STFT epsilon issue; Phase 4 exp02 later showed the STFT term is only 1.5-6.5% of the gradient norm and the rerun did not change validation NLL).
 
 ## Files in `results/`
 

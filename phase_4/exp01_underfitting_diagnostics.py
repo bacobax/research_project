@@ -2,7 +2,7 @@
 """
 Phase 4 / Experiment 1 -- Causal underfitting diagnostics (H1-H4).
 
-RERUN_PLAN.md Section 10 lists four hypotheses for *why* the model underfits even as training
+docs/RERUN_PLAN.md Section 10 lists four hypotheses for *why* the model underfits even as training
 data grows (train NLL rises 1.32 -> 4.51 nats from 1 -> 17 songs, not what a purely data-starved
 model looks like), to be checked on the already eps-bug-clean `phase1_songs17` checkpoint before
 deciding whether the fix is more data, more capacity, or a different architecture/objective:
@@ -16,7 +16,7 @@ deciding whether the fix is more data, more capacity, or a different architectur
   H4 - convergence: is held-out loss still decreasing at the end of training, or has it
        plateaued (i.e. is "underfits" even a safe conclusion yet)?
 
-Only run this against eps-bug-clean checkpoints (see RERUN_PLAN.md Section 3) -- a checkpoint
+Only run this against eps-bug-clean checkpoints (see docs/RERUN_PLAN.md Section 3) -- a checkpoint
 trained with ~1-in-5 steps hijacked by the STFT-loss epsilon bug cannot be trusted for these
 mechanism-level diagnostics; the script prints a loud warning (not a hard refusal) if asked to.
 
@@ -56,7 +56,7 @@ RUN_NAMES = tuple(c.RUNS.keys())
 DEFAULT_RUNS = ("phase1_songs17",)
 DIAGNOSTIC_NAMES = ("h1", "h2", "h3", "h4")
 
-# RERUN_PLAN.md Section 3 -- runs confirmed (empirically, from TensorBoard grad_norm histories)
+# docs/RERUN_PLAN.md Section 3 -- runs confirmed (empirically, from TensorBoard grad_norm histories)
 # NOT to have a significant fraction of steps hijacked by the STFT-loss eps=1e-7 bug.
 EPS_BUG_CLEAN = frozenset({
     "phase1_songs01", "phase1_songs17", "phase3_songs17_seed43", "phase3_songs17_seed44",
@@ -138,7 +138,7 @@ def _check_disk_space(min_free_gib: float = 1.0) -> None:
         raise RuntimeError(
             f"Only {free_gib:.2f} GiB free on / (need >= {min_free_gib} GiB). "
             "This script should only ever write a few MB, but refusing to start on a "
-            "near-full disk rather than risk a partial write. See RERUN_PLAN.md Section 3."
+            "near-full disk rather than risk a partial write. See docs/RERUN_PLAN.md Section 3."
         )
     print(f"[disk] {free_gib:.1f} GiB free on / -- OK")
 
@@ -1223,7 +1223,7 @@ def main(argv=None) -> None:
             eps_clean = run_name in EPS_BUG_CLEAN
             if not eps_clean:
                 print(
-                    f"\n*** WARNING: {run_name} is NOT in the eps-bug-clean set (RERUN_PLAN.md Section 3). "
+                    f"\n*** WARNING: {run_name} is NOT in the eps-bug-clean set (docs/RERUN_PLAN.md Section 3). "
                     "H1/H2/H3 results from this checkpoint cannot be trusted as architecture/objective "
                     "evidence -- an observed pattern may be an artifact of the noisy training trajectory, "
                     "not a real property of the model. Proceeding anyway since explicitly requested. ***\n"

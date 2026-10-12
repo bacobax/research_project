@@ -25,11 +25,19 @@ Run Python tools through `uv run` so the environment stays synchronized.
 - `data/interim/`: temporary/intermediate audio artifacts
 - `outputs/runs/`: training outputs (checkpoints, tensorboard, samples)
 - `outputs/runs_test/`: smoke-test outputs
-- `phase_N/results/`: compact, Git-trackable results for papers and transfer
+- `phase_N/`: experiment scripts per research phase (0-6); `phase_N/results/` holds compact, Git-trackable results, `phase_N/INTERPRETING_RESULTS.md` explains how to read them
+- `docs/`: guides (`SUPERVISOR_GUIDE.md`, `interpreting_results.md`), `experiment_log.md`, `RERUN_PLAN.md`, `archive/`
 - `notebooks/`: notebooks
 - `docs/figures/`: generated diagrams and figures
 - `assets/prompts/`: prompt assets
 - `tests/`: smoke tests for config loading and parsing behavior
+
+## Documentation
+
+- Start here (supervisors): `docs/SUPERVISOR_GUIDE.md`
+- Reading result files and figures: `docs/interpreting_results.md`
+- Reproducing from scratch (data download, seeds): `SETUP.md`
+- Run history: `docs/experiment_log.md`
 
 ## Training (Config-Driven)
 

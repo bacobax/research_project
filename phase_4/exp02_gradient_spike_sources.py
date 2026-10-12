@@ -1,6 +1,6 @@
 """Phase 4, exp02 -- which loss term produces the large gradient norms?
 
-The Phase B' re-audit (RERUN_PLAN.md Sec 3 method, new aggregated logs) found that the four
+The Phase B' re-audit (docs/RERUN_PLAN.md Sec 3 method, new aggregated logs) found that the four
 eps-fixed reruns still show 10-21% of steps with grad_norm > 100 or non-finite, versus ~0.045%
 (all non-finite, no finite spikes) for the clean 17-song / 1-song runs. The aggregated logs cannot
 say which loss term is responsible, so this script measures it directly on saved checkpoints:

@@ -25,7 +25,7 @@ argmax tokens are sensitive to fp16.
 
 | # | Aspect | Training | Inference | Verdict | Evidence |
 |---|---|---|---|---|---|
-| 1 | What is scored | gap frames only | gap frames only | consistent | code audit (`RERUN_PLAN.md` §6) |
+| 1 | What is scored | gap frames only | gap frames only | consistent | code audit (`docs/RERUN_PLAN.md` §6) |
 | 2 | Gap length | 1–4 frames, uniform | real gaps round to 3, 1, 2, 1 frames | consistent (in range) | exp01 coverage table |
 | 3 | **Context tokens next to the gap** | clean audio, gap masked | gapped audio encoded, gap masked | **inconsistent** | exp01: 86% of tokens changed at +1 frame, 46% at +8, ~30% at +64 (0.85 s); 0% before an aligned gap (causal encoder); 1.8% of tokens differ even >64 frames from any real gap |
 | 3a | effect on predictions | | | **none detectable** | token NLL C − A between −0.027 and +0.022 nats, accuracy ±0.005, every CI includes 0, all 4 checkpoints |

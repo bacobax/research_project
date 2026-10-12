@@ -2,12 +2,12 @@
 
 The data-scaling result (Phase 1) is correlational: it shows held-out loss moves with song
 count, not *why* the model still underfits at 17 songs (training NLL rises 1.32 -> 4.51 nats
-from 1 -> 17 songs, not what a purely data-starved model looks like). `RERUN_PLAN.md` Section 10
+from 1 -> 17 songs, not what a purely data-starved model looks like). `docs/RERUN_PLAN.md` Section 10
 lists four mechanism-level hypotheses to check before deciding whether the fix is more data, more
 capacity, or a different architecture/objective. This phase runs those four diagnostics (H1-H4,
 "Phase A" of that plan) against the `phase1_songs17` checkpoint.
 
-**Only run this against eps-bug-clean checkpoints** (`RERUN_PLAN.md` Section 3) — a checkpoint
+**Only run this against eps-bug-clean checkpoints** (`docs/RERUN_PLAN.md` Section 3) — a checkpoint
 trained with a meaningful fraction of steps hijacked by the STFT-loss epsilon bug can't be
 trusted for these mechanism-level diagnostics. The script prints a loud warning (not a hard
 refusal) if asked to anyway.
@@ -127,7 +127,7 @@ Headline findings from the first run:
 
 - n=8 per H2 cell (the run's own `validation_examples_per_length_band`) — individual cells are
   noisy; only trends aggregated across many cells should be treated as signal. Not addressed in
-  this pass (see `RERUN_PLAN.md` Section 10 for the "extended example set" follow-up idea).
+  this pass (see `docs/RERUN_PLAN.md` Section 10 for the "extended example set" follow-up idea).
 - H1's `'train'` marginal is computed over all 17 training songs; the held-out examples come only
   from the pivot song's holdout regions — the two are not the same distribution, which the script
   reports (three separate marginals: `train`, `holdout_all`, `holdout_targets`) rather than
