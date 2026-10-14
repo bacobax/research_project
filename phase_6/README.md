@@ -30,7 +30,30 @@ compromise: encoding a batch of 16 takes 0.07 s (W=150), 0.14 s (W=750), 0.22 s 
 
 Validation: the primary `val/*` set has zeroed-gap context; the same examples with clean context are logged as `val_clean/*`.
 
+## Results (`results/eval/FINDINGS.md`, figures in `results/eval/figures/`)
+
+`eval_final.py` re-scores every checkpoint under one protocol (128 held-out gaps, fp32, deployed = zeroed-gap
+context, same examples) because the training-time validation curves are not comparable (zeroed/fp32/128 examples
+vs clean/fp16/64). Final checkpoints, Phase 6 minus the mean of songs17 seeds 43/44 (paired, 95% CI):
+
+| metric | difference | beyond seed spread |
+|---|---|---|
+| token NLL | +0.085 +- 0.033 (worse) | yes |
+| top-1 accuracy | -0.034 +- 0.014 (worse) | yes |
+| gap SI-SDR vs original audio | -5.6 +- 1.8 dB (worse) | yes |
+| region SI-SDR, spliced output | -0.96 +- 0.34 dB (worse) | yes |
+
+- **P1** the combined recipe is not better than the baseline; slightly worse. (The 2-seed spread is a weak noise estimate.)
+- **P2** training on zeroed context changed robustness little: NLL C-A 0.003 vs 0.024; the 2-3 dB decoded-audio loss from
+  contaminated context is the same (-2.4 vs -2.7 dB).
+- **P3** per-codebook NLL slope is flatter (+0.13 vs +0.17, high band) only because codebook 1 got worse; codebook 8 did not improve.
+  Greedy decoding loses ~25% of top-1 vs teacher-forced (exposure bias), and even the teacher-forced accuracy only equals the baseline's greedy.
+- **P4** splice gains +6 dB region SI-SDR over decoding the whole window (Phase 5 predicted 2-4 dB), for every checkpoint.
+- **P5** selection: `best_val` (step 30k) is the worst Phase 6 checkpoint for audio; `best_audio` (crop SI-SDR, step 210k) is not the best either
+  (that metric barely moves). Audio keeps improving after NLL stops: baseline s42 at 1M steps has gap SI-SDR -2.4 dB vs -6.2 dB at 300k.
+- **Limits:** one Phase 6 seed, four changes at once (cannot attribute), 2 baseline seeds, held-out gaps from one song.
+  Untested explanations: exposure bias of the depth heads, removal of the STFT loss at 17 songs (4A only tested single-song), noisier context.
+
 ## Status
 
-Implemented and tested (`tests/test_codebook_conditioning.py`, `test_zeroed_context.py`, `test_inpaint_splice.py`, schema
-test); smoke run passes (`best_val.pt`, `best_audio.pt`, splice crop samples). **The 300k-step run was launched 2026-10-12 12:26** (`outputs/runs/phase6_final/phase6_final_songs17_seed43`, `save_every: 50000`). Monitor with `uv run python phase_6/monitor.py` (or `watch -n 300 ...`). Observed speed ~2.7-2.9 it/s, i.e. ~28-31 h; the GPU is only ~12% utilised, so the run is CPU/latency-bound (the per-step EnCodec re-encode of 16 windows), on a shared machine.
+Run finished 2026-10-13 17:58 (300k steps, `save_every` 50000); evaluation in `results/eval/`. Monitor script: `monitor.py`.

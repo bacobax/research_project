@@ -153,6 +153,13 @@ RUNS: Dict[str, Dict[str, Any]] = {
         "config": REPO_ROOT / "configs/train/phase3_regularization_seed44.yaml",
         "checkpoints": _checkpoints("phase3_seed_check/phase3_regularization_seed44"),
     },
+    # Phase 6 final run (zeroed-gap context, depth_ar heads); best_audio.pt is selected on crop SI-SDR.
+    "phase6_final_songs17_seed43": {
+        "config": REPO_ROOT / "configs/train/phase6_final_songs17_seed43.yaml",
+        "checkpoints": _checkpoints(
+            "phase6_final/phase6_final_songs17_seed43", ("best_val", "best_audio", "final", "step_100000", "step_200000")
+        ),
+    },
 }
 
 

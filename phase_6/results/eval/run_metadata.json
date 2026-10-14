@@ -1,0 +1,46 @@
+{
+  "plan": {
+    "phase6_final_songs17_seed43": [
+      "final",
+      "best_val",
+      "best_audio",
+      "step_100000",
+      "step_200000"
+    ],
+    "phase3_songs17_seed43": [
+      "final",
+      "best_val"
+    ],
+    "phase3_songs17_seed44": [
+      "final",
+      "best_val"
+    ],
+    "phase1_songs17": [
+      "best_val"
+    ]
+  },
+  "checkpoint_steps": {
+    "phase6_final_songs17_seed43/final": 300000,
+    "phase6_final_songs17_seed43/best_val": 30000,
+    "phase6_final_songs17_seed43/best_audio": 210000,
+    "phase6_final_songs17_seed43/step_100000": 100000,
+    "phase6_final_songs17_seed43/step_200000": 200000,
+    "phase3_songs17_seed43/final": 300000,
+    "phase3_songs17_seed43/best_val": 20000,
+    "phase3_songs17_seed44/final": 300000,
+    "phase3_songs17_seed44/best_val": 280000,
+    "phase1_songs17/best_val": 950000
+  },
+  "n_heldout": 128,
+  "holdout_ranges": [
+    [
+      13349,
+      14885
+    ],
+    [
+      27523,
+      29059
+    ]
+  ],
+  "agreement_source_clean_vs_trainer_codes": 0.9758928418159485
+}
