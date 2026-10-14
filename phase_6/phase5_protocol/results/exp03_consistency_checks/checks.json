@@ -1,0 +1,210 @@
+[
+ {
+  "run": "phase6_final_songs17_seed43@final",
+  "step": 300000,
+  "iterations": [
+   {
+    "gap": 0,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 1,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 2,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 3,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   }
+  ],
+  "precision_heldout": {
+   "argmax_agreement": 0.2796875,
+   "tokens": 2560,
+   "mean_nll_fp16_minus_fp32": 0.131091495975852,
+   "max_abs_example_dnll": 0.8238921165466309
+  },
+  "precision_real_gaps": {
+   "argmax_agreement": 0.5357142857142857,
+   "tokens": 56
+  },
+  "activity_summary": {
+   "real_gap_activity": [
+    0.3575480878353119,
+    0.44551119208335876,
+    0.45868828892707825,
+    0.6851856112480164
+   ],
+   "real_gap_percentile_in_training": [
+    9.305,
+    22.35,
+    24.745,
+    65.45
+   ],
+   "low_thr": 0.38734278082847595,
+   "high_thr": 0.6536419987678528
+  }
+ },
+ {
+  "run": "phase6_final_songs17_seed43@best_val",
+  "step": 30000,
+  "iterations": [
+   {
+    "gap": 0,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 1,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 2,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 3,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   }
+  ],
+  "precision_heldout": {
+   "argmax_agreement": 0.996875,
+   "tokens": 2560,
+   "mean_nll_fp16_minus_fp32": 0.00022893026471138,
+   "max_abs_example_dnll": 0.016054153442382812
+  },
+  "precision_real_gaps": {
+   "argmax_agreement": 1.0,
+   "tokens": 56
+  },
+  "activity_summary": {
+   "real_gap_activity": [
+    0.3575480878353119,
+    0.44551119208335876,
+    0.45868828892707825,
+    0.6851856112480164
+   ],
+   "real_gap_percentile_in_training": [
+    9.305,
+    22.35,
+    24.745,
+    65.45
+   ],
+   "low_thr": 0.38734278082847595,
+   "high_thr": 0.6536419987678528
+  }
+ },
+ {
+  "run": "phase3_songs17_seed43@final",
+  "step": 300000,
+  "iterations": [
+   {
+    "gap": 0,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 1,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 2,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 3,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   }
+  ],
+  "precision_heldout": {
+   "argmax_agreement": 0.49375,
+   "tokens": 2560,
+   "mean_nll_fp16_minus_fp32": 0.055396988056600094,
+   "max_abs_example_dnll": 0.4464282989501953
+  },
+  "precision_real_gaps": {
+   "argmax_agreement": 0.6964285714285714,
+   "tokens": 56
+  },
+  "activity_summary": {
+   "real_gap_activity": [
+    0.3575480878353119,
+    0.44551119208335876,
+    0.45868828892707825,
+    0.6851856112480164
+   ],
+   "real_gap_percentile_in_training": [
+    9.305,
+    22.35,
+    24.745,
+    65.45
+   ],
+   "low_thr": 0.38734278082847595,
+   "high_thr": 0.6536419987678528
+  }
+ },
+ {
+  "run": "phase3_songs17_seed44@final",
+  "step": 300000,
+  "iterations": [
+   {
+    "gap": 0,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 1,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 2,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   },
+   {
+    "gap": 3,
+    "identical_1_vs_10": true,
+    "changed_tokens_any_iteration": 0
+   }
+  ],
+  "precision_heldout": {
+   "argmax_agreement": 0.53125,
+   "tokens": 2560,
+   "mean_nll_fp16_minus_fp32": 0.04421283304691315,
+   "max_abs_example_dnll": 0.34563684463500977
+  },
+  "precision_real_gaps": {
+   "argmax_agreement": 0.6964285714285714,
+   "tokens": 56
+  },
+  "activity_summary": {
+   "real_gap_activity": [
+    0.3575480878353119,
+    0.44551119208335876,
+    0.45868828892707825,
+    0.6851856112480164
+   ],
+   "real_gap_percentile_in_training": [
+    9.594999999999999,
+    22.615,
+    25.05,
+    65.58
+   ],
+   "low_thr": 0.38734278082847595,
+   "high_thr": 0.6536419987678528
+  }
+ }
+]

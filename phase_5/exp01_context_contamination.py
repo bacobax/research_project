@@ -434,7 +434,8 @@ def fig_real_gaps(records: List[Dict], coverage: List[Dict]) -> None:
                         capsize=2.5, elinewidth=1.2, markersize=7, label=labels[cond] if metric == "si_sdr_crop" else None)
         ax.set_xticks(gaps, [f"gap {g}\n{ms[g]:.0f} ms" for g in gaps])
         ax.set_ylabel(ylabel)
-    axes[0].set_title("Real gaps: mean over the 4 single-song checkpoints (bars = min/max)", fontsize=10, loc="left")
+    n_ck = len({r["run"] for r in records})
+    axes[0].set_title(f"Real gaps: mean over the {n_ck} checkpoints (bars = min/max)", fontsize=10, loc="left")
     fig.legend(loc="lower center", ncol=4, bbox_to_anchor=(0.5, -0.05))
     fig.tight_layout(rect=(0, 0.06, 1, 1))
     ps.save(fig, FIG, "real_gaps_quality")
@@ -517,8 +518,9 @@ def make_figures() -> None:
     hop = json.loads((OUT / "run_metadata.json").read_text())[0]["hop_samples"]
     fig_profile(prof)
     fig_coverage(coverage, 24000, hop)
+    n_held = len({r["example"] for r in records if r["set"] == "synthetic"})
     fig_effects(effects, "synthetic", "effect_heldout_gaps",
-                "Held-out gaps (64 per checkpoint): change vs clean context, per checkpoint (95% CI)")
+                f"Held-out gaps ({n_held} per checkpoint): change vs clean context, per checkpoint (95% CI)")
     fig_effects(effects, "real", "effect_real_gaps_vs_clean",
                 "Real gaps (4 per checkpoint): change vs clean context, per checkpoint (95% CI)")
     fig_real_gaps(records, coverage)

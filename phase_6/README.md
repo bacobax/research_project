@@ -54,6 +54,10 @@ vs clean/fp16/64). Final checkpoints, Phase 6 minus the mean of songs17 seeds 43
 - **Limits:** one Phase 6 seed, four changes at once (cannot attribute), 2 baseline seeds, held-out gaps from one song.
   Untested explanations: exposure bias of the depth heads, removal of the STFT loss at 17 songs (4A only tested single-song), noisier context.
 
+## Phase 5 experiments on the Phase 6 model
+
+`phase5_protocol/` runs the unchanged Phase 5 experiments (contamination, gap position, consistency) on the final run and the songs17 baselines; same conclusion: Phase 6 is slightly worse, contamination loss unchanged. See `phase5_protocol/README.md`.
+
 ## Status
 
 Run finished 2026-10-13 17:58 (300k steps, `save_every` 50000); evaluation in `results/eval/`. Monitor script: `monitor.py`.
