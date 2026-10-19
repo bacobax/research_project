@@ -1,0 +1,95 @@
+{
+  "steps": {
+    "phase6_final": 300000,
+    "phase6_best_audio": 210000,
+    "songs17_s43": 300000,
+    "songs17_s44": 300000,
+    "songs17_1M": 950000,
+    "single_song": 100000
+  },
+  "holdout_same_as_phase6": {
+    "phase6_final": true,
+    "phase6_best_audio": true,
+    "songs17_s43": true,
+    "songs17_s44": true,
+    "songs17_1M": true,
+    "single_song": true
+  },
+  "records_csv_max_abs_diff_db": 0.0,
+  "selection": {
+    "heldout_short_best": {
+      "example": "low_activity_len_1_14",
+      "activity_band": "low",
+      "mask_frames": 1,
+      "mean_gap_si_sdr_over_models": 12.718673785527548
+    },
+    "heldout_short_median": {
+      "example": "high_activity_len_1_3",
+      "activity_band": "high",
+      "mask_frames": 1,
+      "mean_gap_si_sdr_over_models": -7.231423030296962
+    },
+    "heldout_short_worst": {
+      "example": "high_activity_len_1_2",
+      "activity_band": "high",
+      "mask_frames": 1,
+      "mean_gap_si_sdr_over_models": -19.170799493789673
+    },
+    "heldout_long_best": {
+      "example": "high_activity_len_4_12",
+      "activity_band": "high",
+      "mask_frames": 4,
+      "mean_gap_si_sdr_over_models": -0.6114602287610372
+    },
+    "heldout_long_median": {
+      "example": "low_activity_len_3_3",
+      "activity_band": "low",
+      "mask_frames": 3,
+      "mean_gap_si_sdr_over_models": -9.430340925852457
+    },
+    "heldout_long_worst": {
+      "example": "low_activity_len_4_11",
+      "activity_band": "low",
+      "mask_frames": 4,
+      "mean_gap_si_sdr_over_models": -24.312244415283203
+    }
+  },
+  "gains": {
+    "real0_50ms": 2.1652668410307583,
+    "real1_20ms": 1.0308360606039755,
+    "real2_30ms": 0.7983932974076043,
+    "real3_15ms": 0.5175185036093694,
+    "heldout_short_best": 2.7142553481537193,
+    "heldout_short_median": 0.3687776866576238,
+    "heldout_short_worst": 0.2952356904041801,
+    "heldout_long_best": 0.319320015544498,
+    "heldout_long_median": 2.0674881423442395,
+    "heldout_long_worst": 26.594470192134413
+  },
+  "heldout_means": {
+    "phase6_final": {
+      "gap_si_sdr": -11.801091259869281,
+      "region_si_sdr": 11.190939504653215
+    },
+    "phase6_best_audio": {
+      "gap_si_sdr": -12.735058286576532,
+      "region_si_sdr": 11.142172895371914
+    },
+    "songs17_s43": {
+      "gap_si_sdr": -6.327135765721323,
+      "region_si_sdr": 12.176326785236597
+    },
+    "songs17_s44": {
+      "gap_si_sdr": -6.100368871499086,
+      "region_si_sdr": 12.116212833672762
+    },
+    "songs17_1M": {
+      "gap_si_sdr": -2.438402488885913,
+      "region_si_sdr": 13.005743633955717
+    },
+    "single_song": {
+      "gap_si_sdr": -10.397497543133795,
+      "region_si_sdr": 11.169381121173501
+    }
+  }
+}
