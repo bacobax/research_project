@@ -87,13 +87,14 @@ see `SETUP.md`.
 ### Setting up a fresh clone
 
 `SETUP.md` ("Reproduce From Scratch") has the full sequence, checked on a fresh clone on
-2026-10-19. In short, from the repository root:
+2026-10-19. Everything, including the pivot recording, is downloaded; a re-downloaded pivot
+gives exactly the same gaps but near-identical (not byte-identical) audio, see `SETUP.md`.
+In short, from the repository root:
 
 ```bash
 uv sync --locked
-scripts/download_data.sh                      # 17 playlist WAVs -> dataset/, EnCodec weights (~3 min)
-mkdir -p data && cp /path/to/nuvole_bianche.mp3 data/   # pivot recording, supplied by hand
-uv run audio-infill-download --verify         # checksums; entry 008 shows DRIFT (known, unused)
+scripts/download_data.sh                      # weights, pivot recording, 17 playlist WAVs (~3 min)
+uv run audio-infill-download --verify         # checksums; DRIFT lines for entry 008 and the pivot are expected
 uv run audio-infill-dataset --config configs/data/nuvole_bianche_short_gaps.yaml
 scripts/smoke_test.sh                         # 30-step training check
 scripts/check_replicability.sh                # ~2 min: every script runs on this checkout

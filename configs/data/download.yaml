@@ -1,4 +1,4 @@
-# Sources for every artifact that is downloaded from the internet or must be supplied by hand.
+# Sources for every artifact that is downloaded from the internet (playlist audio, pivot recording, weights).
 # Consumed by `uv run audio-infill-download` (see src/audio_infill/download_data.py).
 # Checksums for the reference copies live in configs/data/dataset_manifest.json.
 
@@ -36,14 +36,20 @@ playlist:
   # therefore will not match the manifest hash for 008. It is excluded from training
   # (a second recording of the pivot composition), so results are unaffected.
 
-# Files that cannot be fetched automatically and must be placed by hand.
-manual:
-  - path: data/nuvole_bianche.mp3
-    sha256: 080d0f3f122332db64a2e6e963ea62dfaa915682e4d0375457ae85d7a9b4f848
-    description: >-
-      Pivot recording (Nuvole Bianche) used by configs/data/nuvole_bianche_short_gaps.yaml.
-      Original upstream URL was not recorded; supply the exact file (checksum above) and
-      verify with `uv run audio-infill-download --verify`.
+# Pivot recording used by configs/data/nuvole_bianche_short_gaps.yaml: Nuvole Bianche, piano cover by
+# Rousseau (uploaded 2018-08-20, 400 s). The source URL was found in the reference mp3's own metadata.
+# The reference file is YouTube's m4a/AAC stream (format 140) re-encoded to a 192 kb/s mp3, which is
+# exactly what is done here. A new encode is not byte-identical (sha256 below = reference copy) but has
+# the same decoded length, so the same gaps; checked 2026-10-19: corr 0.99999, gapped WAV 48 dB SNR,
+# 93.7% identical EnCodec tokens. `--verify` reports such a file as DRIFT.
+pivot:
+  path: data/nuvole_bianche.mp3
+  video_id: "4VR-6AS0-l4"
+  format: "140"
+  mp3_bitrate: 192k
+  sha256: 080d0f3f122332db64a2e6e963ea62dfaa915682e4d0375457ae85d7a9b4f848
+  frames: 17649664     # decoded length at sample_rate (soundfile)
+  sample_rate: 44100
 
 # Pretrained weights fetched from the internet (used by encodec.EncodecModel.encodec_model_24khz).
 weights:

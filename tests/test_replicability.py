@@ -7,9 +7,9 @@ Every runnable file under ``scripts/`` and ``phase_*/`` is registered in ``SCRIP
 * unset (plain ``uv run pytest -q``): static checks only, a few seconds, no data needed.
   Registry complete, shell scripts strict, Python compiles, every hard-coded run path matches a
   training config, launch wrappers default to configs whose inputs SETUP.md can rebuild.
-* ``setup``: needs the SETUP.md steps done (download, pivot mp3, dataset); a few minutes.
-  Checksums verify, the dataset rebuilds bit-exactly, every research config parses against the
-  setup data, every script imports / answers ``--help``, standalone scripts run, and every
+* ``setup``: needs the SETUP.md steps done (download, dataset); a few minutes. Checksums
+  verify, the dataset rebuilds bit-exactly with the reference gaps, every research config
+  parses against the setup data, every script imports / answers ``--help``, standalone scripts run, and every
   offline report mode regenerates the tracked text results byte-identically (in a scratch copy
   of the checkout, so the working tree is never touched).
 * ``full``: ``setup`` plus a few-step training run through each launch wrapper (smoke, train,
@@ -118,10 +118,12 @@ LEGACY_CONFIGS = {
 }
 # Data configs whose output the SETUP.md "Reproduce From Scratch" steps build.
 SETUP_DATA_CONFIGS = ("configs/data/nuvole_bianche_short_gaps.yaml",)
-# sha256 of the gapped WAV built by configs/data/nuvole_bianche_short_gaps.yaml from the pinned
-# data/nuvole_bianche.mp3 (identical on the original machine and a fresh clone, 2026-10-19).
+# Output of configs/data/nuvole_bianche_short_gaps.yaml. The WAV sha256 holds for the reference
+# data/nuvole_bianche.mp3; the annotation hash (gap positions etc., absolute paths dropped) also
+# holds for a re-downloaded pivot (same decoded length), checked 2026-10-19.
 GAPPED_WAV = "nuvole_bianche_multigap_4x_15ms_20ms_30ms_50ms.wav"
 GAPPED_WAV_SHA256 = "c0cb6487bc08d8f85a5ac9c4858f9f4230834df0739db120cb1086206a4fb6a1"
+GAPPED_ANNOTATION_SHA256 = "7ae5c5c286a60735524ef23803d266dbc8c51c402656b94f4d23fb04f93201af"
 # Hard-coded `outputs/runs/...` strings that are not a run directory or an output root.
 NON_RUN_OUTPUT_PATHS = {"outputs/runs/phase6_final/train.log", "outputs/runs/phase_N"}
 TEXT_RESULT_SUFFIXES = {".md", ".csv", ".json", ".txt"}
@@ -164,6 +166,20 @@ def sha256(path: Path) -> str:
         for block in iter(lambda: f.read(1 << 20), b""):
             h.update(block)
     return h.hexdigest()
+
+
+def annotation_hash(path: Path) -> str:
+    """sha256 of a gap annotation JSON without its absolute-path fields."""
+    ann = json.loads(path.read_text())
+    for key in ("source_wav", "generated_wav"):
+        ann.pop(key, None)
+    return hashlib.sha256(json.dumps(ann, sort_keys=True).encode()).hexdigest()
+
+
+def pivot_is_reference() -> bool:
+    """True if data/nuvole_bianche.mp3 is the reference copy (not a re-encoded download)."""
+    pivot = load_yaml(REPO / "configs/data/download.yaml")["pivot"]
+    return sha256(REPO / pivot["path"]) == pivot["sha256"]
 
 
 def child_env(**extra: str) -> Dict[str, str]:
@@ -373,15 +389,19 @@ class TestSetupArtifacts(unittest.TestCase):
         proc = run([PY, "-m", "audio_infill.download_data", "--verify"], timeout=600)
         self.assertEqual(proc.returncode, 0, tail(proc, 40))
 
-    def test_setup_dataset_matches_pinned_checksum(self):
-        outdir = load_yaml(REPO / SETUP_DATA_CONFIGS[0])["outdir"]
-        self.assertEqual(sha256(REPO / outdir / GAPPED_WAV), GAPPED_WAV_SHA256)
+    def test_setup_dataset_matches_pinned_checksums(self):
+        outdir = REPO / load_yaml(REPO / SETUP_DATA_CONFIGS[0])["outdir"]
+        self.assertEqual(annotation_hash(outdir / GAPPED_WAV.replace(".wav", ".json")), GAPPED_ANNOTATION_SHA256,
+                         "gap annotation differs from the reference (different pivot recording?)")
+        if pivot_is_reference():
+            self.assertEqual(sha256(outdir / GAPPED_WAV), GAPPED_WAV_SHA256)
 
     def test_dataset_rebuild_is_bit_exact(self):
         with tempfile.TemporaryDirectory() as d:
             proc = run([PY, "-m", "audio_infill.make_gapped_dataset", "--config", SETUP_DATA_CONFIGS[0], "--outdir", d])
             self.assertEqual(proc.returncode, 0, tail(proc))
-            self.assertEqual(sha256(Path(d) / GAPPED_WAV), GAPPED_WAV_SHA256)
+            self.assertEqual(sha256(Path(d) / GAPPED_WAV),
+                             sha256(REPO / load_yaml(REPO / SETUP_DATA_CONFIGS[0])["outdir"] / GAPPED_WAV))
             ann = json.loads((Path(d) / GAPPED_WAV.replace(".wav", ".json")).read_text())
             ref = json.loads((REPO / load_yaml(REPO / SETUP_DATA_CONFIGS[0])["outdir"]
                               / GAPPED_WAV.replace(".wav", ".json")).read_text())
