@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Train the encoder-decoder multi-gap model with boundary conditioning (lighter variant).
+# Legacy (pre-Phase 0): train the encoder-decoder multi-gap model with boundary conditioning (lighter variant).
+# Needs data/processed/multigap/, which the SETUP.md steps cannot regenerate (see SETUP.md).
 # Override the config with CONFIG_PATH=...; extra args are forwarded to audio-infill-train.
 set -euo pipefail
 

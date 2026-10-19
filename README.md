@@ -17,7 +17,7 @@ Run Python tools through `uv run` so the environment stays synchronized.
 ## Project Layout
 
 - `src/audio_infill/`: core source code (`train.py`, `make_gapped_dataset.py`, `graph.py`)
-- `scripts/`: runnable wrappers (`run_train.sh`, `run_multigap_train.sh`, `resume.sh`, `smoke_test.sh`)
+- `scripts/`: runnable wrappers (`run_train.sh`, `resume.sh`, `smoke_test.sh`, `check_replicability.sh`; legacy `run_multigap*_train.sh`)
 - `configs/train/`: explicit training configs (all parameters listed)
 - `configs/data/`: dataset generation config templates
 - `data/raw/`: source media
@@ -44,14 +44,14 @@ Run Python tools through `uv run` so the environment stays synchronized.
 Training now runs through a YAML config:
 
 ```bash
-uv run audio-infill-train --config configs/train/longrun.yaml
+uv run audio-infill-train --config configs/train/phase6_final_songs17_seed43.yaml
 ```
 
 CLI overrides are optional and remain supported:
 
 ```bash
 uv run audio-infill-train \
-  --config configs/train/longrun.yaml \
+  --config configs/train/phase6_final_songs17_seed43.yaml \
   --total-steps 1000 \
   --device cuda:0
 ```
@@ -59,17 +59,19 @@ uv run audio-infill-train \
 Shell wrappers (thin):
 
 ```bash
-scripts/run_train.sh
-scripts/run_multigap_train.sh
-scripts/resume.sh
-scripts/smoke_test.sh
+scripts/smoke_test.sh   # configs/train/smoke.yaml: 30-step pipeline check on the setup data
+scripts/run_train.sh    # configs/train/phase6_final_songs17_seed43.yaml: the final run
+scripts/resume.sh       # resume the final run from its latest.pt (RESUME_CKPT=... to choose)
 ```
 
 Each script accepts optional overrides after the config call, for example:
 
 ```bash
-scripts/run_multigap_train.sh --device cuda:0 --total-steps 10000
+scripts/run_train.sh --device cuda:0 --total-steps 10000
 ```
+
+`scripts/run_multigap_train.sh` and `scripts/run_multigap_boundary_train.sh` are legacy
+(pre-Phase 0): their inputs cannot be rebuilt from `SETUP.md` (see there).
 
 ## Config Files
 
@@ -77,11 +79,10 @@ All train configs under `configs/train/` contain explicit values for all trainin
 
 Key files:
 
-- `configs/train/base.yaml`: baseline explicit config
-- `configs/train/longrun.yaml`: single-gap long training
-- `configs/train/multigap.yaml`: multi-gap curriculum training
-- `configs/train/resume_multigap.yaml`: resume/continue setup
-- `configs/train/smoke.yaml`: tiny smoke run for pipeline checks
+- `configs/train/phase6_final_songs17_seed43.yaml`: the final run
+- `configs/train/phase{1..4}_*.yaml`, `nuvole_bianche_short_gaps_encoder_decoder*.yaml`: the Phase 0-5 runs
+- `configs/train/smoke.yaml`: tiny smoke run for pipeline checks (`scripts/smoke_test.sh`)
+- Legacy, inputs not rebuildable: `base.yaml`, `longrun.yaml`, `multigap*.yaml`, `resume_multigap.yaml`
 
 ## Dataset Generation
 
@@ -118,6 +119,14 @@ Run tests from the repository root:
 
 ```bash
 uv run pytest -q
+```
+
+After the `SETUP.md` steps, check that every script runs on this checkout
+(`tests/test_replicability.py`; plain `pytest` runs only its static part):
+
+```bash
+scripts/check_replicability.sh          # ~2 min: data, every script starts, results regenerate
+scripts/check_replicability.sh full     # + few-step training via each wrapper, ~10 min on a GPU
 ```
 
 To run the standard-library fallback:

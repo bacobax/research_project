@@ -2251,6 +2251,11 @@ class Trainer:
         import librosa
 
         logger.info("Loading audio: %s", wav_path)
+        if not os.path.isfile(wav_path):
+            raise FileNotFoundError(
+                f"input audio not found: {wav_path} (see SETUP.md 'Reproduce From Scratch'; the legacy "
+                "data/processed/{single_gap,multigap} and data/interim inputs cannot be regenerated)"
+            )
 
         audio, sr = sf.read(wav_path, always_2d=True)
         audio = audio.astype(np.float32).mean(axis=1)

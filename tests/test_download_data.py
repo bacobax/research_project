@@ -23,6 +23,10 @@ class DownloadConfigTests(unittest.TestCase):
         entries = dd.parse_entries(cfg)
         self.assertEqual([e.index for e in entries], list(range(1, len(entries) + 1)))
         self.assertEqual(len({e.video_id for e in entries}), len(entries))
+        pivot = cfg["pivot"]
+        self.assertEqual(pivot["path"], "data/nuvole_bianche.mp3")
+        self.assertEqual(len(pivot["sha256"]), 64)
+        self.assertGreater(int(pivot["frames"]), 0)
         for w in cfg["weights"]:
             self.assertTrue(w["url"].startswith("https://"))
             self.assertEqual(len(w["sha256"]), 64)
@@ -66,6 +70,41 @@ class DownloadConfigTests(unittest.TestCase):
             # existing valid file => no network call, no failure
             rc = dd.download_playlist(cfg, manifest, root, strict=False, limit=None, dry_run=False)
             self.assertEqual(rc, 0)
+
+    def test_verify_tolerates_drift_only_on_non_training_entries(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "ds").mkdir()
+            _write_wav(root / "ds" / "001_a.wav")
+            _write_wav(root / "ds" / "002_b.wav")
+            _write_wav(root / "pivot.wav")
+            pivot = {"path": "pivot.wav", "sha256": dd.sha256_file(root / "pivot.wav"), "frames": 100, "sample_rate": 24000}
+            cfg = {"output_dir": "ds", "playlist": {"sample_rate": 24000, "channels": 1, "entries": [
+                {"index": 1, "video_id": "a", "filename": "001_a.wav"},
+                {"index": 2, "video_id": "b", "filename": "002_b.wav", "training": False}]},
+                "pivot": pivot, "weights": []}
+            mpath = root / "m.json"
+            dd.update_manifest(cfg, root, mpath)
+            manifest = dd.load_manifest(mpath)
+            _write_wav(root / "ds" / "002_b.wav", frames=7)  # drift on the non-training entry
+            self.assertEqual(dd.verify(cfg, manifest, root), 0)
+            self.assertEqual(dd.verify(cfg, manifest, root, strict=True), 1)
+            _write_wav(root / "ds" / "001_a.wav", frames=7)  # drift on a training entry
+            self.assertEqual(dd.verify(cfg, manifest, root), 1)
+
+    def test_pivot_status_separates_reencode_from_wrong_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "pivot.wav"
+            _write_wav(p, frames=100)
+            pivot = {"sha256": dd.sha256_file(p), "frames": 100, "sample_rate": 24000}
+            self.assertEqual(dd.pivot_status(p, pivot), "ok")
+            with wave.open(str(p), "wb") as wf:  # same length, different samples: a new encode
+                wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(24000)
+                wf.writeframes(b"\x01\x00" * 100)
+            self.assertEqual(dd.pivot_status(p, pivot), "drift")
+            _write_wav(p, frames=99)
+            self.assertEqual(dd.pivot_status(p, pivot), "mismatch")
+            self.assertEqual(dd.pivot_status(Path(d) / "absent.mp3", pivot), "missing")
 
     def test_cli_help(self):
         with self.assertRaises(SystemExit) as cm:

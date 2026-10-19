@@ -89,7 +89,8 @@ def main():
     alive = subprocess.run(["pgrep", "-f", "phase6_final_songs17_seed43.yaml"], capture_output=True, text=True).stdout.split()
     print("process:", "running" if alive else "NOT RUNNING")
     log = REPO / "outputs/runs/phase6_final/train.log"
-    bad = [l for l in log.read_text(errors="ignore").splitlines() if "non-finite" in l or "Traceback" in l or "Early stopping" in l]
+    lines = log.read_text(errors="ignore").splitlines() if log.is_file() else []
+    bad = [l for l in lines if "non-finite" in l or "Traceback" in l or "Early stopping" in l]
     if bad:
         print("!! log alerts:", *bad[-3:], sep="\n   ")
 

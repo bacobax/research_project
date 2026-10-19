@@ -233,20 +233,10 @@ def floors(trainer, ex_meta, clean_win, audio_in, rs, zspan, crop, sr, hop):
     return rows
 
 
-def run_eval(device: str, limit: Optional[int] = None, plan: Optional[Dict[str, Tuple[str, ...]]] = None) -> None:
-    plan = plan or PLAN
-    ann = json.loads(ANNOTATION.read_text())
-    records: List[Dict] = []
-    meta: Dict = {"plan": {r: list(t) for r, t in (plan or PLAN).items()}, "checkpoint_steps": {}}
-
-    # shared example set + encodings, from the Phase 6 trainer
-    tr6 = c.build_trainer(P6, plan[P6][0], device=device)
+def heldout_examples(tr6, frames: int) -> Tuple[List[Dict], List]:
+    """The 128 held-out gaps (Phase 6 validation construction) with their real-like zeroed spans and
+    metric crops [lo, hi) (gap +- MARGIN frames). Returns (examples, holdout ranges)."""
     hop = tr6.cfg.target_sr // tr6.encoder.frame_rate
-    sr = tr6.cfg.target_sr
-    base = c.load_source_wav_matching_annotation(str(SOURCE), sr)
-    E = Encodings(tr6.encoder, base)
-    frames = min(E.clean.shape[1], tr6.frames)
-    clean = E.clean[:, :frames].long()
     grouped, holdout6 = c.build_real_validation_examples(tr6)
     examples = []
     for key, items in grouped.items():
@@ -262,6 +252,24 @@ def run_eval(device: str, limit: Optional[int] = None, plan: Optional[Dict[str, 
             lo, hi = max(0, ms - MARGIN), min(T, ms + L + MARGIN)
             examples.append(dict(example=f"{key}_{i}", band="high" if key.startswith("high") else "low",
                                  mask_len=L, ws=ws, ms=ms, T=T, zs=zs, ze=ze, lo=lo, hi=hi))
+    return examples, holdout6
+
+
+def run_eval(device: str, limit: Optional[int] = None, plan: Optional[Dict[str, Tuple[str, ...]]] = None) -> None:
+    plan = plan or PLAN
+    ann = json.loads(ANNOTATION.read_text())
+    records: List[Dict] = []
+    meta: Dict = {"plan": {r: list(t) for r, t in (plan or PLAN).items()}, "checkpoint_steps": {}}
+
+    # shared example set + encodings, from the Phase 6 trainer
+    tr6 = c.build_trainer(P6, plan[P6][0], device=device)
+    hop = tr6.cfg.target_sr // tr6.encoder.frame_rate
+    sr = tr6.cfg.target_sr
+    base = c.load_source_wav_matching_annotation(str(SOURCE), sr)
+    E = Encodings(tr6.encoder, base)
+    frames = min(E.clean.shape[1], tr6.frames)
+    clean = E.clean[:, :frames].long()
+    examples, holdout6 = heldout_examples(tr6, frames)
     if limit:
         examples = examples[::max(1, len(examples) // limit)][:limit]
     print(f"{len(examples)} held-out examples; encoding zeroed songs (cached in {CACHE}) ...", flush=True)

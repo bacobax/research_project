@@ -1,0 +1,125 @@
+{
+  "steps": {
+    "phase0_baseline": 162000,
+    "phase0_bigmodel": 108000,
+    "single_song": 100000,
+    "single_song_reg": 600000,
+    "single_song_reg_stft_off": 300000,
+    "songs04": 300000,
+    "songs17_s43": 300000,
+    "songs17_s44": 300000,
+    "songs17_1M": 950000,
+    "phase6_final": 300000,
+    "phase6_best_audio": 210000
+  },
+  "holdout_same_as_phase6": {
+    "phase0_baseline": true,
+    "phase0_bigmodel": true,
+    "single_song": true,
+    "single_song_reg": true,
+    "single_song_reg_stft_off": true,
+    "songs04": true,
+    "songs17_s43": true,
+    "songs17_s44": true,
+    "songs17_1M": true,
+    "phase6_final": true,
+    "phase6_best_audio": true
+  },
+  "records_csv_max_abs_diff_db": 0.0,
+  "selection": {
+    "heldout_short_best": {
+      "example": "low_activity_len_1_14",
+      "activity_band": "low",
+      "mask_frames": 1,
+      "mean_gap_si_sdr_over_models": 7.493118719621138
+    },
+    "heldout_short_median": {
+      "example": "high_activity_len_2_8",
+      "activity_band": "high",
+      "mask_frames": 2,
+      "mean_gap_si_sdr_over_models": -9.338610193946145
+    },
+    "heldout_short_worst": {
+      "example": "low_activity_len_2_2",
+      "activity_band": "low",
+      "mask_frames": 2,
+      "mean_gap_si_sdr_over_models": -18.96190209822221
+    },
+    "heldout_long_best": {
+      "example": "high_activity_len_4_12",
+      "activity_band": "high",
+      "mask_frames": 4,
+      "mean_gap_si_sdr_over_models": -3.0193199732086877
+    },
+    "heldout_long_median": {
+      "example": "low_activity_len_4_4",
+      "activity_band": "low",
+      "mask_frames": 4,
+      "mean_gap_si_sdr_over_models": -11.05800479108637
+    },
+    "heldout_long_worst": {
+      "example": "high_activity_len_3_15",
+      "activity_band": "high",
+      "mask_frames": 3,
+      "mean_gap_si_sdr_over_models": -19.200198888778687
+    }
+  },
+  "gains": {
+    "real0_50ms": 2.008312571556849,
+    "real1_20ms": 1.0308360606039755,
+    "real2_30ms": 0.7983932974076043,
+    "real3_15ms": 0.5175185036093694,
+    "heldout_short_best": 2.7142553481537193,
+    "heldout_short_median": 0.33391702932394535,
+    "heldout_short_worst": 2.818115237242816,
+    "heldout_long_best": 0.319320015544498,
+    "heldout_long_median": 2.1649483661780464,
+    "heldout_long_worst": 0.30129940816946027
+  },
+  "heldout_means": {
+    "phase0_baseline": {
+      "gap_si_sdr": -20.335854029282928,
+      "region_si_sdr": -4.675960924476385
+    },
+    "phase0_bigmodel": {
+      "gap_si_sdr": -9.964657140430063,
+      "region_si_sdr": 11.098403415642679
+    },
+    "single_song": {
+      "gap_si_sdr": -10.397497543133795,
+      "region_si_sdr": 11.169381121173501
+    },
+    "single_song_reg": {
+      "gap_si_sdr": -9.234882710617967,
+      "region_si_sdr": 11.621087931096554
+    },
+    "single_song_reg_stft_off": {
+      "gap_si_sdr": -9.820248174364679,
+      "region_si_sdr": 11.51976852864027
+    },
+    "songs04": {
+      "gap_si_sdr": -8.972153218404856,
+      "region_si_sdr": 11.699812032282352
+    },
+    "songs17_s43": {
+      "gap_si_sdr": -6.327135765721323,
+      "region_si_sdr": 12.176326785236597
+    },
+    "songs17_s44": {
+      "gap_si_sdr": -6.100368871499086,
+      "region_si_sdr": 12.116212833672762
+    },
+    "songs17_1M": {
+      "gap_si_sdr": -2.438402488885913,
+      "region_si_sdr": 13.005743633955717
+    },
+    "phase6_final": {
+      "gap_si_sdr": -11.801091259869281,
+      "region_si_sdr": 11.190939504653215
+    },
+    "phase6_best_audio": {
+      "gap_si_sdr": -12.735058286576532,
+      "region_si_sdr": 11.142172895371914
+    }
+  }
+}

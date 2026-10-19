@@ -22,9 +22,9 @@ mismatches) and end with one final run that fixes the mismatches found.
 | Path | What it holds |
 |---|---|
 | `src/audio_infill/` | All runtime code. `train.py` (model, trainer, validation, losses, inference), `config.py` (config dataclasses and YAML parsing), `make_gapped_dataset.py` (dataset generation, CLI `audio-infill-dataset`), `graph.py` (architecture diagram, CLI `audio-infill-graph`). |
-| `configs/train/*.yaml` | One YAML per training run; every parameter is listed explicitly. Names tell the phase (`phase1_songs17.yaml`, `phase4_stft_off_seed43.yaml`, `phase6_final_songs17_seed43.yaml`). `base.yaml`, `longrun.yaml`, `smoke.yaml` are generic. The two `nuvole_bianche_short_gaps_encoder_decoder*.yaml` files are the Phase 0 single-song runs. |
+| `configs/train/*.yaml` | One YAML per training run; every parameter is listed explicitly. Names tell the phase (`phase1_songs17.yaml`, `phase4_stft_off_seed43.yaml`, `phase6_final_songs17_seed43.yaml`). `smoke.yaml` is a 30-step pipeline check; `base.yaml`, `longrun.yaml`, `multigap*.yaml`, `resume_multigap.yaml` are legacy (pre-Phase 0, their input audio cannot be rebuilt). The two `nuvole_bianche_short_gaps_encoder_decoder*.yaml` files are the Phase 0 single-song runs. |
 | `configs/data/*.yaml` | Dataset-generation templates (single gap, multigap, short gaps). |
-| `scripts/` | Thin shell wrappers (`run_train.sh`, `run_multigap_train.sh`, `resume.sh`, `smoke_test.sh`) that call `uv run audio-infill-train --config ...`. Also `scaffold_phase.py` (creates a new phase skeleton), `export_gap_audio_samples.py` (curated audio examples), (playlist download now lives in `audio-infill-download`, `src/audio_infill/download_data.py`). |
+| `scripts/` | Thin shell wrappers that call `uv run audio-infill-train --config ...`: `smoke_test.sh` (pipeline check), `run_train.sh` (final run), `resume.sh` (resume it); `run_multigap*_train.sh` are legacy. `check_replicability.sh` checks that every script runs after setup. Also `scaffold_phase.py` (creates a new phase skeleton), `export_gap_audio_samples.py` (curated audio examples), (playlist download now lives in `audio-infill-download`, `src/audio_infill/download_data.py`). |
 | `phase_0/` ... `phase_6/` | One directory per research phase: analysis/export scripts, a `README.md`, and a `results/` folder with the portable outputs. See section 5. |
 | `docs/experiment_log.md` | Table of every training run (changes made, hypothesis, key result, conclusion), plus notes on analysis-only phases. |
 | `docs/RERUN_PLAN.md` | Audit of the STFT-loss `eps` bug that confounded some Phase 1-3 runs, the empirical evidence, and the rerun plan. Also records the answers to the supervisor's three questions (Q1 STFT impact, Q2 argmax decoding, Q3 gap-only vs gap+context loss). |
@@ -84,13 +84,37 @@ checkpoints from `outputs/runs/...`; these were produced on the project machine 
 Audio inputs are expected under `data/` (for example `data/nuvole_bianche.mp3`, `data/processed/`);
 see `SETUP.md`.
 
-### Reproducing a phase with uv
+### Setting up a fresh clone
 
-Run everything from the repository root. First `uv sync --locked`, then:
+`SETUP.md` ("Reproduce From Scratch") has the full sequence, checked on a fresh clone on
+2026-10-19. Everything, including the pivot recording, is downloaded; a re-downloaded pivot
+gives exactly the same gaps but near-identical (not byte-identical) audio, see `SETUP.md`.
+In short, from the repository root:
 
 ```bash
-uv run pytest -q                                                   # tests
-scripts/smoke_test.sh                                              # tiny end-to-end training check
+uv sync --locked
+scripts/download_data.sh                      # weights, pivot recording, 17 playlist WAVs (~3 min)
+uv run audio-infill-download --verify         # checksums; DRIFT lines for entry 008 and the pivot are expected
+uv run audio-infill-dataset --config configs/data/nuvole_bianche_short_gaps.yaml
+scripts/smoke_test.sh                         # 30-step training check
+scripts/check_replicability.sh                # ~2 min: every script runs on this checkout
+```
+
+`scripts/check_replicability.sh` (`tests/test_replicability.py`) verifies the checksums, that
+the gapped dataset rebuilds bit-exactly, that every script imports or answers `--help`, and
+that every offline report mode (`make_summary.py`, `--figures-only`, `--report-only`)
+regenerates the committed text results byte-identically. `scripts/check_replicability.sh full`
+also trains each launch wrapper for a few steps and runs the Phase 6 evaluation on those tiny
+checkpoints (~10 min on a GPU). The phase experiment scripts themselves need the trained
+`outputs/runs/` (retrain with the listed configs); the check confirms each one reads exactly
+where its config writes.
+
+### Reproducing a phase with uv
+
+Run everything from the repository root, after the setup above:
+
+```bash
+uv run pytest -q                                                   # tests (9 known legacy-fixture failures)
 uv run audio-infill-train --config configs/train/phase1_songs17.yaml --device cuda:0
 uv run python phase_1/export_results.py                            # raw runs -> phase_1/results/
 uv run python phase_0/exp01_train_region_control.py                # or: bash phase_0/run_all.sh
@@ -180,7 +204,7 @@ the Phase B reruns showed that it did not change validation loss for the configs
 | Which parameters a run used | `configs/train/<run_name>.yaml` (also copied to `phase_N/results/configs/` for Phases 1-2) |
 | How a result was exported and from which raw files | `phase_N/results/provenance.json` (Phases 1-2) and the exporting script |
 | Environment, data and launch instructions | `SETUP.md` |
-| That the code still works | `uv run pytest -q`, `scripts/smoke_test.sh` |
+| That the code still works | `uv run pytest -q`, `scripts/smoke_test.sh`, `scripts/check_replicability.sh` |
 | Prototyping code and one-off investigations | `notebooks/` |
 
 Note: Phases 1 and 2 have their narrative in `phase_N/results/README.md` rather than a top-level `phase_N/README.md`.
