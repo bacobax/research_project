@@ -67,6 +67,24 @@ class DownloadConfigTests(unittest.TestCase):
             rc = dd.download_playlist(cfg, manifest, root, strict=False, limit=None, dry_run=False)
             self.assertEqual(rc, 0)
 
+    def test_verify_tolerates_drift_only_on_non_training_entries(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "ds").mkdir()
+            _write_wav(root / "ds" / "001_a.wav")
+            _write_wav(root / "ds" / "002_b.wav")
+            cfg = {"output_dir": "ds", "playlist": {"sample_rate": 24000, "channels": 1, "entries": [
+                {"index": 1, "video_id": "a", "filename": "001_a.wav"},
+                {"index": 2, "video_id": "b", "filename": "002_b.wav", "training": False}]}, "weights": []}
+            mpath = root / "m.json"
+            dd.update_manifest(cfg, root, mpath)
+            manifest = dd.load_manifest(mpath)
+            _write_wav(root / "ds" / "002_b.wav", frames=7)  # drift on the non-training entry
+            self.assertEqual(dd.verify(cfg, manifest, root), 0)
+            self.assertEqual(dd.verify(cfg, manifest, root, strict=True), 1)
+            _write_wav(root / "ds" / "001_a.wav", frames=7)  # drift on a training entry
+            self.assertEqual(dd.verify(cfg, manifest, root), 1)
+
     def test_cli_help(self):
         with self.assertRaises(SystemExit) as cm:
             dd.build_parser().parse_args(["--help"])

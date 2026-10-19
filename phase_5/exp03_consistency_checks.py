@@ -165,6 +165,9 @@ def selection_alignment() -> List[Dict]:
 
 def fig_selection(rows: List[Dict]) -> None:
     """Scatter of validation NLL against gap-only SI-SDR across logged validation points."""
+    if not rows:
+        print("skipping selection_nll_vs_audio: no TensorBoard validation history found (outputs/runs/**/tb)")
+        return
     ps.apply_style()
     import matplotlib.pyplot as plt
     n = len(rows)

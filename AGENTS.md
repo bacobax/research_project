@@ -13,6 +13,7 @@ Audio-infill research project: a transformer inpaints short gaps in EnCodec toke
 
 ## Commands (repo root; uv only, never pip/conda/activate)
 - `uv sync`; `uv run pytest -q`; `scripts/smoke_test.sh`; `scripts/run_train.sh` / `resume.sh`.
+- `scripts/check_replicability.sh [setup|full]`: post-setup check that every script runs (`tests/test_replicability.py`).
 - `scripts/download_data.sh` (`audio-infill-download`) fetches data/weights; see `SETUP.md` for the full reproduce sequence.
 - `uv run audio-infill-dataset --help`; `uv run python scripts/scaffold_phase.py N` starts a new phase.
 
@@ -20,7 +21,7 @@ Audio-infill research project: a transformer inpaints short gaps in EnCodec toke
 4-space indent, snake_case (files, functions, YAML keys), PascalCase classes. Add docstrings to new code; match local logging/config patterns; keep diffs small. Shell scripts: `set -euo pipefail`.
 
 ## Testing
-Tests are `unittest`, pytest-compatible, in `tests/test_<feature>.py`. Config schema changes: update both config dataclasses (`config.py` and `train.py`'s `TrainConfig` must stay in sync) and add parser tests. Training-loop changes need a smoke-level assertion.
+Tests are `unittest`, pytest-compatible, in `tests/test_<feature>.py`. Config schema changes: update both config dataclasses (`config.py` and `train.py`'s `TrainConfig` must stay in sync) and add parser tests. Training-loop changes need a smoke-level assertion. New scripts under `scripts/` or `phase_*/` must be registered in `SCRIPTS` in `tests/test_replicability.py` (the static test fails otherwise).
 Known failures on a clean checkout (9): 8 need legacy `data/processed` fixtures that can't be rebuilt; `test_zeroed_context::test_context_changes_only_after_gap_and_targets_untouched` fails on HEAD too.
 
 ## Gotchas

@@ -39,6 +39,7 @@ def main() -> None:
     ap.add_argument("--device", default="cuda:1")
     ap.add_argument("--songs", type=int, default=3)
     ap.add_argument("--windows", type=int, default=16)
+    ap.add_argument("--out", type=Path, default=REPO / "phase_6/results/preflight_zeroed_context.json")
     args = ap.parse_args()
     dev = torch.device(args.device)
     enc = AudioEncoder(6.0, dev)
@@ -75,18 +76,19 @@ def main() -> None:
            "agreement_with_whole_song_zeroed_encoding": {
                str(w): {k: float(np.mean(v)) for k, v in d.items()} for w, d in agree.items()}}
 
-    # (2) cost of one batch of 16
+    # (2) cost of one batch of 16 (GPU timings are the meaningful ones; CPU runs just skip the sync)
+    sync = (lambda: torch.cuda.synchronize(dev)) if dev.type == "cuda" else (lambda: None)
     wav = load(paths[0])
     for w in (150, 750, 1500):
         segs = torch.stack([wav[:, (1600 + 37 * i - w) * HOP:(1600 + 37 * i + SEQ) * HOP] for i in range(16)]).to(dev)
         enc.model.encode(segs)
-        torch.cuda.synchronize(dev)
+        sync()
         t = time.time()
         for _ in range(5):
             enc.model.encode(segs)
-        torch.cuda.synchronize(dev)
+        sync()
         out[f"encode_batch16_seconds_W{w}"] = (time.time() - t) / 5
-    (REPO / "phase_6/results/preflight_zeroed_context.json").write_text(json.dumps(out, indent=2))
+    args.out.write_text(json.dumps(out, indent=2))
     print(json.dumps(out, indent=2))
 
 

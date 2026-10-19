@@ -1,65 +1,81 @@
+# Fast end-to-end pipeline check (scripts/smoke_test.sh): the Phase 6 pipeline (configs/train/phase6_smoke.yaml)
+# on data produced by the SETUP.md steps, 2 songs, 30 steps; everything is written under outputs/runs_test/.
 config: configs/train/smoke.yaml
 # Dataset inputs: processed gapped-audio directory + sample name (<ds_dir>/<sample>.json annotation).
-ds_dir: data/processed/multigap
-sample: null
+ds_dir: data/processed/nuvole_bianche_short_gaps
+sample: nuvole_bianche_multigap_4x_15ms_20ms_30ms_50ms
 # If true, overwrite gap/seq_len/mask settings from the sample's JSON annotation recommendations.
 auto_hparam: false
 
 # Audio + codec: input wav, codec sample rate and EnCodec bandwidth (kbps); gap_*_s is the primary gap in seconds.
-wav_path: data/processed/multigap/wav_test_multigap_4x_1p0s_2p0s_5p0s_10p0s.wav
+wav_path: data/processed/nuvole_bianche_short_gaps/nuvole_bianche_multigap_4x_15ms_20ms_30ms_50ms.wav
 target_sr: 24000
 bandwidth: 6.0
-gap_start_s: 200.0
-gap_end_s: 210.0
+gap_start_s: 0.0
+gap_end_s: 0.015
 
 # Transformer size (max_len = positional-embedding table size in frames).
 d_model: 256
 n_heads: 4
 n_layers: 4
-max_len: 1124
+max_len: 512
 dropout: 0.1
+# Max frame distance (clamped) used by the boundary-conditioning embeddings.
+boundary_max_distance: 128
 
 # Training window: frames per sample, and min/max masked-span length in frames (ctx_left/right: optional fixed context).
-seq_len: 1124
-mask_len_min: 64
-mask_len_max: 128
+seq_len: 512
+mask_len_min: 1
+mask_len_max: 4
 ctx_left: null
 ctx_right: null
 
 # Optimisation: AdamW with linear warmup then cosine decay to total_steps; grad_clip is global-norm.
 batch_size: 4
-lr: 0.0002
+lr: 0.0003
 weight_decay: 0.01
 betas: [0.9, 0.95]
-grad_clip: 1.0
-warmup_steps: 0
+grad_clip: 1.0   # tightened from 1.5 after a gradient-explosion/NaN incident (see decoded_loss_log_eps below)
+warmup_steps: 10
 total_steps: 30
+
 # Cadences in steps (0 disables): scalar logging, checkpoints, test-gap fill samples.
-log_every: 5
+log_every: 10
 save_every: 30
-test_fill_every: 10
+test_fill_every: 0
+
 # Validation: cadence in steps and fixed-pool construction (validation_strategy picks how the pool is built).
-validation_every: 0
+validation_every: 15
 validation_examples_per_band: 64
-validation_batch_size: null
+validation_batch_size: 16
+validation_strategy: holdout_regions
+validation_regions_per_band: 1
+validation_region_len_frames: 1536
+validation_region_min_separation_frames: 1124
+validation_examples_per_length_band: 2
+validation_mask_lengths: [1, 2, 3, 4]
+validation_inspection_enabled: false   # Phase 6: figures were ~97% of TensorBoard size
+validation_inspection_examples_per_group: 1
+validation_crop_context_frames: null
+validation_save_artifacts: false
 num_workers: 0
 
 # Run bookkeeping: outputs go to <output_dir>/<run_name>; device 'auto' picks cuda when available.
 output_dir: outputs/runs_test
-run_name: smoketest_multigap
-seed: 42
+run_name: smoketest
+seed: 43
 device: auto
 
 # Resume from a checkpoint path; inpaint_only skips training and only runs inference (inpaint_iters refinement passes).
 resume: null
 inpaint_only: false
-inpaint_iters: 3
-inpaint_output: null
+inpaint_iters: 1
+inpaint_output: outputs/runs_test/smoketest/infilled.wav
 
 # Optional mask-length curriculum from curriculum_start_mask to curriculum_end_mask over curriculum_warmup_frac of training.
 curriculum: false
-curriculum_start_mask: null
-curriculum_end_mask: null
+curriculum_start_mask: 1
+curriculum_end_mask: 4
 curriculum_warmup_frac: 0.1
 curriculum_schedule: linear
 
@@ -68,12 +84,69 @@ activity_smooth_kernel: 9
 activity_low_quantile: 0.30
 activity_high_quantile: 0.70
 weighted_sampling: true
-dead_window_min_mean: 0.01
-dead_window_min_ratio: 0.03
-regime_active_prob: 0.45
+
+dead_window_min_mean: 0.005
+dead_window_min_ratio: 0.01
+regime_active_prob: 0.35
 regime_transition_prob: 0.30
-regime_low_prob: 0.15
-regime_uniform_prob: 0.10
+regime_low_prob: 0.20
+regime_uniform_prob: 0.15
+
 # Mask placement stride (frames) and whether masks are steered by the activity regimes above.
 mask_stride: 1
 activity_guided_masking: true
+
+# Model variant: true = encoder-decoder infiller, false = joint (decoder-only style) infiller.
+use_encoder_decoder: true
+# Decoded-audio auxiliary loss (waveform L1 + multi-resolution STFT) on the codec-decoded prediction; log_eps floors the log-magnitude term.
+decoded_loss_enabled: false   # Phase 4 exp03: no detectable effect
+decoded_loss_weight: 0.10
+decoded_loss_start_step: 7000
+decoded_loss_every: 4
+decoded_loss_max_items: 1
+decoded_loss_margin_frames: 16
+decoded_loss_temperature: 1.0
+decoded_loss_waveform_l1_weight: 0.25
+decoded_loss_stft_weight: 1.0
+decoded_loss_spectral_convergence_weight: 1.0
+decoded_loss_log_magnitude_weight: 1.0
+decoded_loss_n_ffts: [512, 1024, 2048]
+decoded_loss_hop_lengths: [128, 256, 512]
+decoded_loss_win_lengths: [512, 1024, 2048]
+# Raised from the 1e-7 default: log(clamp_min(x, eps))'s gradient is 1/x, so a tiny eps lets
+# near-silent STFT bins (common in low-activity windows) produce gradients as large as 1/eps
+# (~1e7 at the old default). This run diverged at step 131,549 after ~9,400 steps of grad_norm
+# spikes into the 10^4-10^6 range while grad_clip masked the effect on the loss -- raising this
+# floor bounds that specific term's worst-case gradient at ~1/eps (~1e3 here) instead.
+decoded_loss_log_eps: 0.001
+
+# Training-stability and validation-metric options.
+early_stopping_enabled: false   # no patience, matching every Phase 1/2/3 run
+nan_guard_enabled: true
+
+validation_audio_metrics_enabled: true
+validation_audio_metrics_max_examples: null
+
+# Phase 1 data-scaling regime: 17 songs (pivot + all 16 remaining dataset/ tracks).
+# dataset/008_* is excluded: it's a different recording of the pivot composition (Nuvole
+# Bianche), so it contains the same material as the pivot's held-out validation regions.
+extra_wavs_dir: dataset
+extra_wavs_exclude: ["008_*"]
+extra_wavs_limit: 2
+song_sampling: duration
+
+
+# --- Phase 6: everything Phases 0-5 found, in one run (see phase_6/README.md) ---
+# Train on context encoded from audio with the gap zeroed, as validation/inference do (Phase 5).
+zeroed_context_prob: 1.0
+zeroed_context_warmup_frames: 300
+# Codebook k of each gap frame is conditioned on codebooks < k (Phase 4 H2/H6).
+codebook_conditioning: depth_ar
+depth_layers: 2
+# fp32 validation (Phase 4: fp16 vs fp32 differed by up to 0.33 nats) and an audio-selected checkpoint (Phase 5 #8).
+validation_autocast: false
+audio_selection_metric: si_sdr_db
+# Only the gap's samples replace the input audio (Phase 5: re-encoded context cost 2-4 dB).
+inpaint_output_mode: splice
+# Light TensorBoard: scalars only, flushed every log_every steps; no matplotlib figures.
+tb_log_figures: false

@@ -258,8 +258,12 @@ def fetch_weights(cfg, root: Path, dry_run: bool) -> int:
     return rc
 
 
-def verify(cfg, manifest, root: Path) -> int:
-    """Offline check of every expected file against the pinned checksums."""
+def verify(cfg, manifest, root: Path, strict: bool = False) -> int:
+    """Offline check of every expected file against the pinned checksums.
+
+    A mismatch on a ``training: false`` playlist entry (known upstream drift, e.g. 008) is
+    reported as ``DRIFT`` and does not count as a problem unless ``strict`` is set.
+    """
     import torch
 
     bad = 0
@@ -271,6 +275,9 @@ def verify(cfg, manifest, root: Path) -> int:
             bad += 1
             continue
         st = check_against_manifest(rel, manifest, root)
+        if st == "mismatch" and not e.training and not strict:
+            print(f"DRIFT     {rel}  (training: false; ignored unless --strict)")
+            continue
         print(f"{st.upper():9s} {rel}")
         bad += st == "mismatch"
     for m in cfg.get("manual", []):
@@ -334,7 +341,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--verify", action="store_true", help="Offline: check files against checksums, no network")
     p.add_argument("--update-manifest", action="store_true",
                    help="Write checksums of the files currently on disk to the manifest")
-    p.add_argument("--strict", action="store_true", help="Treat audio checksum mismatches as errors")
+    p.add_argument("--strict", action="store_true",
+                   help="Treat audio checksum mismatches as errors (with --verify: also training: false entries)")
     p.add_argument("--limit", type=int, default=None, help="Only process the first N playlist entries")
     p.add_argument("--dry-run", action="store_true", help="Print what would be downloaded")
     return p
@@ -347,7 +355,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(args.config)
     manifest = load_manifest(args.manifest)
     if args.verify:
-        return verify(cfg, manifest, root)
+        return verify(cfg, manifest, root, strict=args.strict)
     if args.update_manifest:
         return update_manifest(cfg, root, args.manifest)
     rc = 0

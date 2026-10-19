@@ -216,7 +216,7 @@ def family_summary(runs: Sequence[RunAtCutoff]) -> list[dict[str, Any]]:
 def _write_family_tex(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
     """Write the per-family summary table as a LaTeX fragment."""
     def fmt(mean: Any, std: Any, digits: int = 4) -> str:
-        """LaTeX 'mean $\pm$ std' cell ('--' when missing)."""
+        r"""LaTeX 'mean $\pm$ std' cell ('--' when missing)."""
         if mean is None or (isinstance(mean, float) and mean != mean):
             return "--"
         if std is None or (isinstance(std, float) and std != std):

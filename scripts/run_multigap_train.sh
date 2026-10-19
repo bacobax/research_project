@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Train the multi-gap model with decoded-loss validation (v2 config).
+# Legacy (pre-Phase 0): train the multi-gap model with decoded-loss validation (v2 config).
+# Needs data/processed/multigap/, which the SETUP.md steps cannot regenerate (see SETUP.md).
 # Override the config with CONFIG_PATH=...; extra args are forwarded to audio-infill-train.
 set -euo pipefail
 
