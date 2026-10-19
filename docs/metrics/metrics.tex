@@ -1,0 +1,60 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=2.2cm]{geometry}
+\usepackage{amsmath,amssymb,booktabs}
+\begin{document}
+\section*{Evaluation metrics}
+
+\subsection*{Token level (masked gap tokens $\mathcal{M}$)}
+Let $K$ be the number of codebooks, $y_{k,t}$ the true code, and $p_\theta(\cdot\mid k,t)$ the predicted distribution.
+\begin{align}
+\mathcal{L}_{\mathrm{CE}} &= -\frac{1}{|\mathcal{M}|}\sum_{(k,t)\in\mathcal{M}} \ln p_\theta(y_{k,t}\mid k,t) && [\text{nats/token}]\\
+\mathrm{PPL} &= \exp\!\big(\mathcal{L}_{\mathrm{CE}}\big) && [\text{unitless; chance}=1024]\\
+\mathrm{acc}_{\text{top-}n} &= \frac{1}{|\mathcal{M}|}\sum_{(k,t)\in\mathcal{M}} \mathbb{1}\!\big[y_{k,t}\in \operatorname{top}_n p_\theta(\cdot\mid k,t)\big] && [\text{fraction},\,0\text{--}1]
+\end{align}
+
+\subsection*{Audio level (decoded gap, $\hat{x}$ prediction, $x$ target)}
+\paragraph{SI-SDR} [dB, higher is better]
+\begin{equation}
+\alpha=\frac{\langle \hat{x},x\rangle}{\langle x,x\rangle+\varepsilon},\qquad
+\mathrm{SI\text{-}SDR}=10\log_{10}\frac{\|\alpha x\|^2}{\|\hat{x}-\alpha x\|^2}
+\end{equation}
+
+\paragraph{Spectral convergence} [dimensionless, lower is better]. With $S_r(\cdot)=|\mathrm{STFT}_r(\cdot)|$ at resolution $r\in\{1,\dots,R\}$:
+\begin{equation}
+\mathrm{SC}=\frac{1}{R}\sum_{r=1}^{R}\frac{\|S_r(x)-S_r(\hat{x})\|_F}{\|S_r(x)\|_F}
+\end{equation}
+
+\paragraph{Log-magnitude loss} [nats, lower is better]
+\begin{equation}
+\mathcal{L}_{\mathrm{mag}}=\frac{1}{R}\sum_{r=1}^{R}\operatorname{mean}\big|\ln S_r(x)-\ln S_r(\hat{x})\big|
+\end{equation}
+
+\paragraph{Total multi-resolution STFT loss} with weights $\lambda_{\mathrm{sc}},\lambda_{\mathrm{mag}}$:
+\begin{equation}
+\mathcal{L}_{\mathrm{STFT}}=\lambda_{\mathrm{sc}}\,\mathrm{SC}+\lambda_{\mathrm{mag}}\,\mathcal{L}_{\mathrm{mag}}
+\end{equation}
+
+\paragraph{Waveform L1} [normalized amplitude, full scale $=1$]
+\begin{equation}
+\mathcal{L}_{\mathrm{L1}}=\frac{1}{N}\sum_{n=1}^{N}\big|x[n]-\hat{x}[n]\big|
+\end{equation}
+
+SI-SDR and SC are computed on a \emph{margin-included} crop (gap plus context frames) and a \emph{gap-only} crop (margin $=0$).
+
+\subsection*{Units summary}
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Metric & Unit & Better \\
+\midrule
+$\mathcal{L}_{\mathrm{CE}}$ & nats/token & lower \\
+PPL & unitless & lower \\
+acc top-1/5 & fraction & higher \\
+SI-SDR & dB & higher \\
+SC & ratio & lower \\
+$\mathcal{L}_{\mathrm{mag}}$ & nats & lower \\
+$\mathcal{L}_{\mathrm{L1}}$ & normalized amplitude & lower \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{document}
