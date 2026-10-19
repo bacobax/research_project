@@ -22,6 +22,7 @@ import argparse
 import csv
 import json
 import math
+import shutil
 import sys
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
@@ -39,14 +40,21 @@ import plot_style as ps  # noqa: E402
 from audio_infill.train import splice_gap_audio  # noqa: E402
 
 OUT = REPO / "phase_6" / "results" / "demo_samples"
-# (file label, run, checkpoint tag). Early best_val checkpoints (Phase 6 30k, s43 20k) are left out on purpose.
+# (file label, run, checkpoint tag): one checkpoint per run type, the last one trained (baseline/bigmodel
+# were killed by hand, so `latest`; songs17_1M is the 1M-step run's best_val at 950k). Early best_val
+# checkpoints (Phase 6 30k, songs17 s43 20k) are left out on purpose.
 MODELS: List[Tuple[str, str, str]] = [
-    ("phase6_final", ef.P6, "final"),
-    ("phase6_best_audio", ef.P6, "best_audio"),
+    ("phase0_baseline", "baseline", "latest"),
+    ("phase0_bigmodel", "bigmodel", "latest"),
+    ("single_song", "phase1_songs01", "final"),
+    ("single_song_reg", "phase2_regularization", "final"),
+    ("single_song_reg_stft_off", "phase4_stft_off_seed43", "final"),
+    ("songs04", "phase1_songs04", "final"),
     ("songs17_s43", ef.S43, "final"),
     ("songs17_s44", ef.S44, "final"),
     ("songs17_1M", ef.S42, "best_val"),
-    ("single_song", "phase1_songs01", "final"),
+    ("phase6_final", ef.P6, "final"),
+    ("phase6_best_audio", ef.P6, "best_audio"),
 ]
 BANDS = {"short": (1, 2), "long": (3, 4)}  # held-out gap length in frames (75 Hz: 13-27 ms, 40-53 ms)
 CROP_S = 1.0
@@ -182,32 +190,39 @@ def fig_gap(gap_id: str, title: str, versions: Dict[str, np.ndarray], zs: int, z
 
 
 def fig_scores(rows: List[Dict]) -> None:
-    """Gap-only and region SI-SDR of every version, per demo gap (the numbers in index.csv)."""
+    """Heatmaps (gap x model) of gap-only SI-SDR and of region SI-SDR minus the zeroed input's (the numbers in index.csv)."""
     import matplotlib.pyplot as plt
+    from matplotlib.colors import LinearSegmentedColormap, Normalize, TwoSlopeNorm
     gaps = list(dict.fromkeys(r["gap_id"] for r in rows))
-    style = {"zeroed": (ps.MUTED, "x"), "phase6_final": (ps.CAT[0], "o"), "phase6_best_audio": (ps.CAT[0], "D"),
-             "songs17_s43": (ps.CAT[1], "s"), "songs17_s44": (ps.CAT[2], "^"), "songs17_1M": (ps.INK_2, "v"),
-             "single_song": (ps.INK_2, "P")}
-    fig, axes = plt.subplots(1, 2, figsize=(12, 0.42 * len(gaps) + 1.8), sharey=True)
-    for ax, key, label in ((axes[0], "gap_si_sdr_db", "gap-only SI-SDR vs original (dB)"),
-                           (axes[1], "region_si_sdr_db", "region SI-SDR vs original, gap +- 16 frames (dB)")):
-        for j, (model, (col, mk)) in enumerate(style.items()):
-            pts = [(r[key], gaps.index(r["gap_id"])) for r in rows if r["model"] == model and finite(r[key])]
-            if pts:
-                off = (j - 3) * 0.08
-                ax.scatter([p[0] for p in pts], [p[1] + off for p in pts], color=col, marker=mk, s=26,
-                           facecolors=col if model != "phase6_best_audio" else "white", label=model, zorder=3)
-        ax.set_title(label, fontsize=9.5)
+    models = [m for m, _, _ in MODELS]
+    val = {(r["gap_id"], r["model"]): r for r in rows}
+    gap = np.array([[val[(g, m)]["gap_si_sdr_db"] if finite(val[(g, m)]["gap_si_sdr_db"]) else np.nan for m in models]
+                    for g in gaps], dtype=float)
+    reg = np.array([[val[(g, m)]["region_si_sdr_db"] - val[(g, "zeroed")]["region_si_sdr_db"] for m in models]
+                    for g in gaps], dtype=float)
+    seq = LinearSegmentedColormap.from_list("blue_ramp", ["#f4f7fb"] + ps.BLUE_RAMP)
+    div = LinearSegmentedColormap.from_list("div", [ps.CAT[1], "#f7f6f2", ps.CAT[0]])
+    fig, axes = plt.subplots(1, 2, figsize=(16, 0.45 * len(gaps) + 3.2), sharey=True)
+    # colour ranges are clipped so a few extreme cells (phase0_baseline) do not wash out the rest; labels are exact
+    panels = ((axes[0], gap, seq, Normalize(-30, 20), "gap-only SI-SDR vs original (dB, higher is better; colour clipped to -30..20)"),
+              (axes[1], reg, div, TwoSlopeNorm(0, -8, 8), "region SI-SDR minus zeroed input (dB): blue = better than silence (colour clipped to +-8)"))
+    for ax, data, cmap, norm, title in panels:
+        im = ax.imshow(np.clip(data, norm.vmin, norm.vmax), cmap=cmap, norm=norm, aspect="auto")
+        for i in range(data.shape[0]):
+            for j in range(data.shape[1]):
+                if np.isfinite(data[i, j]):
+                    dark = cmap is seq and norm(data[i, j]) > 0.6
+                    ax.text(j, i, f"{data[i, j]:.1f}", ha="center", va="center", fontsize=6.5,
+                            color="white" if dark else ps.INK)
+        ax.set_xticks(range(len(models)))
+        ax.set_xticklabels(models, rotation=50, ha="right", fontsize=7.5)
+        ax.set_title(title, fontsize=9.5)
+        ax.grid(False)
+        fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02)
     axes[0].set_yticks(range(len(gaps)))
     axes[0].set_yticklabels(gaps, fontsize=8)
-    axes[0].invert_yaxis()
-    handles, labels = axes[0].get_legend_handles_labels()
-    if "zeroed" not in labels:
-        h1, l1 = axes[1].get_legend_handles_labels()
-        handles, labels = h1, l1
-    fig.legend(handles, labels, loc="lower center", ncol=len(labels), fontsize=8, frameon=False)
-    fig.suptitle("Demo gaps: score of every version (zeroed has no gap-only score: its gap is silence)", fontsize=10)
-    fig.tight_layout(rect=(0, 0.06, 1, 1))
+    fig.suptitle("Demo gaps: score of every model fill", fontsize=10)
+    fig.tight_layout()
     ps.save(fig, OUT / "figures", "scores")
 
 
@@ -267,6 +282,8 @@ def main(argv: Sequence[str] | None = None) -> None:
              if k in held["phase6_final"] and finite(rec[k]["wav_gapspan_si_sdr"]) and finite(held["phase6_final"][k]["gap"])]
     print(f"vs records.csv (phase6 final, gap SI-SDR): max |diff| {max(diffs):.3f} dB over {len(diffs)} gaps", flush=True)
 
+    for old in [*OUT.glob("gap_*"), OUT / "figures"]:  # selection can change with MODELS: drop stale folders
+        shutil.rmtree(old)
     rows: List[Dict] = []
     meta = {"steps": steps, "holdout_same_as_phase6": holdout_same, "records_csv_max_abs_diff_db": max(diffs),
             "selection": {}, "gains": {}}

@@ -62,3 +62,7 @@ phase_0/results/scratch/
 phase_0/results/audio/
 # Exception: results/demo_samples/ holds the curated demo WAVs for the supervisor (scripts/make_demo_samples.py).
 !phase_[0-9]*/results/demo_samples/**/*.wav
+
+# Local submission bundle built by scripts/package_submission_samples.sh (not tracked).
+/submission_samples/
+/submission_samples.zip
